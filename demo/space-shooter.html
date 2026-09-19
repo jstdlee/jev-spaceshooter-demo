@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jev bounded movement decision demo</title>
+  <style>
+    :root { color-scheme: dark; --bg:#050a14; --panel:#0b1424; --line:#20324d; --text:#e8f1ff; --muted:#91a6c5; --cyan:#5ce1e6; --blue:#6e8cff; --amber:#ffc86b; --red:#ff7086; --green:#79e6a6; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 50% -10%,#152d50 0,#07101f 38%,#03070e 100%); color:var(--text); font:14px/1.45 Inter,system-ui,sans-serif; }
+    .shell { width:min(1380px,96vw); margin:20px auto; }
+    header { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:14px; }
+    h1 { margin:0; font-size:clamp(22px,3vw,34px); letter-spacing:-.03em; }
+    .eyebrow { color:var(--cyan); font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
+    .sub { color:var(--muted); max-width:760px; }
+    .layout { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(330px,.8fr); gap:14px; align-items:start; }
+    .panel { background:linear-gradient(180deg,rgba(15,28,48,.96),rgba(7,14,26,.96)); border:1px solid var(--line); border-radius:14px; box-shadow:0 20px 55px rgba(0,0,0,.28); overflow:hidden; }
+    #game-panel { position:relative; }
+    canvas { width:100%; display:block; aspect-ratio:48/31; background:#020711; }
+    .hud { display:grid; grid-template-columns:repeat(6,1fr); gap:1px; border-top:1px solid var(--line); background:var(--line); }
+    .hud > div { background:#081221; padding:10px 12px; min-width:0; }
+    .label { display:block; color:var(--muted); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+    .value { display:block; margin-top:2px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .controls { display:flex; flex-wrap:wrap; gap:8px; padding:12px; border-top:1px solid var(--line); }
+    button { border:1px solid #2b496c; border-radius:8px; background:#10213a; color:var(--text); padding:8px 11px; cursor:pointer; font-weight:700; }
+    button:hover { border-color:var(--cyan); }
+    .side { display:grid; gap:14px; }
+    .section { padding:14px; }
+    .section + .section { border-top:1px solid var(--line); }
+    .section h2 { margin:0 0 10px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; }
+    .statusline { display:grid; grid-template-columns:78px 1fr; gap:8px; padding:5px 0; border-bottom:1px solid rgba(56,80,113,.35); }
+    .statusline:last-child { border-bottom:0; }
+    .statusline span:first-child { color:var(--muted); }
+    .statusline strong { min-width:0; overflow-wrap:anywhere; }
+    .candidate-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+    .candidate { border:1px solid var(--line); border-radius:7px; padding:6px; min-width:0; background:#091528; }
+    .candidate b { display:block; font-size:10px; overflow:hidden; text-overflow:ellipsis; }
+    .candidate small { color:var(--muted); font-size:9px; }
+    .candidate.safe { border-color:rgba(121,230,166,.55); }
+    .candidate.risk { border-color:rgba(255,112,134,.55); }
+    .candidate.bound { opacity:.55; }
+    .metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+    .metric { background:#07111f; border:1px solid var(--line); border-radius:8px; padding:8px; }
+    .metric b { display:block; font-size:17px; }
+    .metric span { color:var(--muted); font-size:9px; line-height:1.25; display:block; }
+    .history { display:grid; gap:6px; max-height:180px; overflow:auto; }
+    .history-item { display:grid; grid-template-columns:62px 1fr auto; gap:7px; color:var(--muted); font-size:11px; }
+    .ok { color:var(--green)!important; } .warn { color:var(--amber)!important; } .bad { color:var(--red)!important; }
+    .note { color:var(--muted); font-size:10px; margin-top:8px; }
+    @media (max-width:980px) { .layout { grid-template-columns:1fr; } .hud { grid-template-columns:repeat(3,1fr); } }
+    @media (max-width:560px) { .shell { width:100%; margin:0; } .panel { border-radius:0; } header { padding:12px; } .hud { grid-template-columns:repeat(2,1fr); } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div><div class="eyebrow">Jev · structured choice under changing state</div><h1>Bounded movement decision demo</h1></div>
+      <div class="sub">Local swept checks gate nine short actions. Jev selects one eligible action; freshness and current-state checks decide whether it is actually executed.</div>
+    </header>
+    <div class="layout">
+      <section id="game-panel" class="panel">
+        <canvas id="game" width="960" height="620" aria-label="Space shooter arena"></canvas>
+        <div class="hud">
+          <div><span class="label">Wave</span><span class="value" id="hud-wave">1</span></div>
+          <div><span class="label">Score</span><span class="value" id="hud-score">0</span></div>
+          <div><span class="label">Hull</span><span class="value" id="hud-lives">♥♥♥</span></div>
+          <div><span class="label">Run ID</span><span class="value" id="hud-run">—</span></div>
+          <div><span class="label">Sim elapsed</span><span class="value" id="hud-elapsed">0.0 s</span></div>
+          <div><span class="label">Mode</span><span class="value" id="hud-mode">AUTO</span></div>
+        </div>
+        <div class="controls">
+          <button id="autopilot-button">Auto pilot: ON</button>
+          <button id="pause-button">Pause</button>
+          <button id="restart-button">Restart run</button>
+          <span class="sub">Move manually with WASD/arrows or pointer. Space pauses.</span>
+        </div>
+      </section>
+      <aside class="side">
+        <section id="decision-panel" class="panel">
+          <div class="section">
+            <h2>Decision boundary</h2>
+            <div class="statusline"><span>Selected</span><strong id="selected">none</strong></div>
+            <div class="statusline"><span>Executed</span><strong id="executed">local · hold</strong></div>
+            <div class="statusline"><span>Override</span><strong id="override">none</strong></div>
+            <div class="statusline"><span>Safety</span><strong id="safety">scanning</strong></div>
+            <div class="statusline"><span>Request</span><strong id="request-status">idle</strong></div>
+          </div>
+          <div class="section">
+            <h2>All nine candidates</h2>
+            <div id="candidate-grid" class="candidate-grid"></div>
+          </div>
+          <div class="section">
+            <h2>API observations</h2>
+            <div class="metrics">
+              <div class="metric"><b id="metric-latency">—</b><span>round trip ms</span></div>
+              <div class="metric"><b id="metric-token-rate">—</b><span>API token throughput (input+output), tok/s</span></div>
+              <div class="metric"><b id="metric-completed-rate">0.00</b><span>rolling completed requests/s</span></div>
+              <div class="metric"><b id="metric-usage">— / —</b><span>input / output tokens</span></div>
+              <div class="metric"><b id="metric-calls">0</b><span>completed calls</span></div>
+              <div class="metric"><b id="metric-failures">0</b><span>API/transport failures</span></div>
+              <div class="metric"><b id="metric-accepted">0</b><span>accepted choices</span></div>
+              <div class="metric"><b id="metric-applied">0</b><span>Jev commands applied</span></div>
+            </div>
+            <div class="note">Neither rate is decode TPS. Token throughput divides reported input+output work by bridge round-trip time; completion rate counts finished requests in a rolling 10 s window.</div>
+          </div>
+          <div class="section"><h2>Recent events</h2><div id="history" class="history"></div></div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <script id="space-decision-core">
+  (() => {
+    "use strict";
+    const ACTION_MS = 240;
+    const LOOKAHEAD_MS = 600;
+    const ACTION_SPEED = 112;
+    const MAX_RESPONSE_AGE_MS = 600;
+    const SAFETY_MARGIN_PX = 4;
+    const ACTION_IDS = Object.freeze(["hold","left","right","up","down","up_left","up_right","down_left","down_right"]);
+    const DIRECTIONS = Object.freeze({ hold:[0,0], left:[-1,0], right:[1,0], up:[0,-1], down:[0,1], up_left:[-1,-1], up_right:[1,-1], down_left:[-1,1], down_right:[1,1] });
+    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+
+    function velocityFor(actionId, speed = ACTION_SPEED) {
+      const direction = DIRECTIONS[actionId];
+      if (!direction) throw new Error(`unknown action: ${actionId}`);
+      const magnitude = Math.hypot(direction[0], direction[1]) || 1;
+      return { x: direction[0] / magnitude * speed, y: direction[1] / magnitude * speed };
+    }
+
+    function arenaFor(width, height, playerWidth, playerHeight) {
+      return { left:playerWidth/2, right:width-playerWidth/2, top:playerHeight/2, bottom:height-playerHeight/2 };
+    }
+
+    function planAction(player, actionId, moveMs = ACTION_MS, horizonMs = LOOKAHEAD_MS, arena = arenaFor(960,620,player.w,player.h)) {
+      const velocity = velocityFor(actionId);
+      const moveSeconds = Math.max(0, Math.min(moveMs, horizonMs)) / 1000;
+      const horizonSeconds = Math.max(0, horizonMs) / 1000;
+      const endpoint = { x:player.x + velocity.x * moveSeconds, y:player.y + velocity.y * moveSeconds };
+      const inBounds = player.x >= arena.left && player.x <= arena.right && player.y >= arena.top && player.y <= arena.bottom && endpoint.x >= arena.left && endpoint.x <= arena.right && endpoint.y >= arena.top && endpoint.y <= arena.bottom;
+      const segments = [];
+      if (moveSeconds > 0) segments.push({ t0:0, t1:moveSeconds, p0:{x:player.x,y:player.y}, p1:{...endpoint} });
+      if (horizonSeconds > moveSeconds) segments.push({ t0:moveSeconds, t1:horizonSeconds, p0:{...endpoint}, p1:{...endpoint} });
+      if (!segments.length) segments.push({ t0:0, t1:0, p0:{x:player.x,y:player.y}, p1:{x:player.x,y:player.y} });
+      return { id:actionId, inBounds, segments, endpoint, velocity };
+    }
+
+    function axisInterval(position, velocity, extent, duration) {
+      if (Math.abs(velocity) < 1e-12) return Math.abs(position) <= extent ? [0,duration] : null;
+      const a = (-extent - position) / velocity;
+      const b = (extent - position) / velocity;
+      const enter = Math.max(0, Math.min(a,b));
+      const exit = Math.min(duration, Math.max(a,b));
+      return enter <= exit + 1e-12 ? [enter,exit] : null;
+    }
+
+    function relativeMotion(segment, threat) {
+      const duration = Math.max(0, segment.t1 - segment.t0);
+      const playerVelocity = duration > 0 ? { x:(segment.p1.x-segment.p0.x)/duration, y:(segment.p1.y-segment.p0.y)/duration } : {x:0,y:0};
+      return {
+        duration,
+        rx:threat.x + (threat.vx||0)*segment.t0 - segment.p0.x,
+        ry:threat.y + (threat.vy||0)*segment.t0 - segment.p0.y,
+        vx:(threat.vx||0)-playerVelocity.x,
+        vy:(threat.vy||0)-playerVelocity.y,
+      };
+    }
+
+    function sweptContact(segment, threat, halfExtents) {
+      const r = relativeMotion(segment, threat);
+      const x = axisInterval(r.rx, r.vx, halfExtents.x, r.duration);
+      const y = axisInterval(r.ry, r.vy, halfExtents.y, r.duration);
+      if (!x || !y) return null;
+      const enter = Math.max(x[0], y[0]);
+      const exit = Math.min(x[1], y[1]);
+      return enter <= exit + 1e-12 ? segment.t0 + enter : null;
+    }
+
+    function segmentClearance(segment, threat, halfExtents) {
+      const r = relativeMotion(segment, threat);
+      const lines = [
+        [r.vx, r.rx-halfExtents.x], [-r.vx, -r.rx-halfExtents.x],
+        [r.vy, r.ry-halfExtents.y], [-r.vy, -r.ry-halfExtents.y], [0,0],
+      ];
+      const times = [0,r.duration];
+      for (let i=0;i<lines.length;i+=1) for (let j=i+1;j<lines.length;j+=1) {
+        const denominator = lines[i][0]-lines[j][0];
+        if (Math.abs(denominator) < 1e-12) continue;
+        const t = (lines[j][1]-lines[i][1])/denominator;
+        if (t >= 0 && t <= r.duration) times.push(t);
+      }
+      let best = Number.POSITIVE_INFINITY;
+      for (const t of times) best = Math.min(best, Math.max(Math.abs(r.rx+r.vx*t)-halfExtents.x, Math.abs(r.ry+r.vy*t)-halfExtents.y, 0));
+      return best;
+    }
+
+    function allThreats(snapshot) {
+      return [...(snapshot.bullets||[]), ...(snapshot.enemies||[])];
+    }
+
+    function evaluateCandidates(snapshot, previousActionId = "hold", options = {}) {
+      const player = snapshot.player;
+      const arena = arenaFor(snapshot.width, snapshot.height, player.w, player.h);
+      const center = { x:snapshot.width/2, y:snapshot.height*.68 };
+      const threats = allThreats(snapshot);
+      const moveMs = options.moveMs === undefined ? ACTION_MS : options.moveMs;
+      const horizonMs = options.horizonMs === undefined ? LOOKAHEAD_MS : options.horizonMs;
+      return ACTION_IDS.map((id,index) => {
+        const plan = planAction(player,id,moveMs,horizonMs,arena);
+        let collisionTime = null;
+        let clearance = threats.length ? Number.POSITIVE_INFINITY : null;
+        for (const threat of threats) {
+          const halfExtents = { x:player.w/2+(threat.w||8)/2+SAFETY_MARGIN_PX, y:player.h/2+(threat.h||8)/2+SAFETY_MARGIN_PX };
+          for (const segment of plan.segments) {
+            const contact = sweptContact(segment,threat,halfExtents);
+            if (contact !== null && (collisionTime === null || contact < collisionTime)) collisionTime = contact;
+            clearance = Math.min(clearance,segmentClearance(segment,threat,halfExtents));
+          }
+        }
+        const room = Math.max(0,Math.min(plan.endpoint.x-arena.left,arena.right-plan.endpoint.x,plan.endpoint.y-arena.top,arena.bottom-plan.endpoint.y));
+        const centerCost = Math.max(0,(Math.hypot(plan.endpoint.x-center.x,plan.endpoint.y-center.y)-54)/200);
+        const roomCost = 1-clamp(room/100,0,1);
+        const switchCost = id===previousActionId?0:1;
+        return { id,index,inBounds:plan.inBounds,collisionTime,clearance,endpoint:plan.endpoint,centerCost,room,roomCost,switchCost,softCost:centerCost+.5*roomCost+.08*switchCost,safe:plan.inBounds&&collisionTime===null };
+      });
+    }
+
+    function chooseFallback(candidates) {
+      const safe = candidates.filter((candidate) => candidate.safe).sort((a,b)=>a.softCost-b.softCost||a.index-b.index);
+      if (safe.length) return {...safe[0],no_safe_candidate:false};
+      const inBounds = candidates.filter((candidate)=>candidate.inBounds).sort((a,b)=>{
+        const aTime = a.collisionTime===null ? Number.POSITIVE_INFINITY : a.collisionTime;
+        const bTime = b.collisionTime===null ? Number.POSITIVE_INFINITY : b.collisionTime;
+        return bTime-aTime || (b.clearance??-1)-(a.clearance??-1) || a.softCost-b.softCost || a.index-b.index;
+      });
+      return {...(inBounds[0]||candidates[0]),no_safe_candidate:true};
+    }
+
+    const shouldRequestModel = (candidates) => candidates.filter((candidate)=>candidate.safe).length >= 2;
+
+    function createLifecycle(epoch = 0) {
+      return { epoch, nextSequence:1, pending:null, lastAcceptedSequence:0, queued:null, active:null, lastExecutedId:"hold", acceptedCount:0, executedCount:0, jevExecutedCount:0 };
+    }
+
+    function makeRequestRecord(lifecycle,candidates,sentAtMs,abortController) {
+      const record = { epoch:lifecycle.epoch, sequence:lifecycle.nextSequence, sentAtMs, offeredIds:Object.freeze(candidates.filter((c)=>c.safe).map((c)=>c.id)), abortController };
+      return { record, lifecycle:{...lifecycle,nextSequence:lifecycle.nextSequence+1,pending:record} };
+    }
+
+    function validateReply(reply,request,lifecycle,nowMs,status) {
+      if (!request || lifecycle.pending!==request) return {ok:false,reason:"superseded_request"};
+      if (!status.running) return {ok:false,reason:"paused_or_stopped"};
+      if (!status.autopilot) return {ok:false,reason:"manual"};
+      if (!reply || reply.epoch!==request.epoch || request.epoch!==lifecycle.epoch) return {ok:false,reason:"stale_epoch"};
+      if (reply.sequence!==request.sequence || reply.sequence<=lifecycle.lastAcceptedSequence) return {ok:false,reason:"stale_sequence"};
+      const age = nowMs-request.sentAtMs;
+      if (age<0 || age>MAX_RESPONSE_AGE_MS) return {ok:false,reason:"age"};
+      if (!reply.api_ok) return {ok:false,reason:"api_failure"};
+      if (!reply.valid_choice) return {ok:false,reason:"invalid_answer"};
+      if (!request.offeredIds.includes(reply.movement)) return {ok:false,reason:"unoffered_choice"};
+      return {ok:true,reason:null,ageMs:age};
+    }
+
+    function acceptReply(reply,request,lifecycle,nowMs,status) {
+      const validation = validateReply(reply,request,lifecycle,nowMs,status);
+      if (!validation.ok) return {lifecycle,event:{type:"rejected",reason:validation.reason,selected:reply&&reply.movement||null}};
+      const queued = { id:reply.movement,epoch:reply.epoch,sequence:reply.sequence,sentAtMs:request.sentAtMs,receivedAtMs:nowMs,responseAgeMs:validation.ageMs };
+      return { lifecycle:{...lifecycle,pending:null,lastAcceptedSequence:reply.sequence,queued,acceptedCount:lifecycle.acceptedCount+1}, event:{type:"selected",id:reply.movement,epoch:reply.epoch,sequence:reply.sequence,ageMs:validation.ageMs} };
+    }
+
+    function clearPendingIfCurrent(lifecycle,request) { return lifecycle.pending===request ? {...lifecycle,pending:null} : lifecycle; }
+
+    function invalidateLifecycle(lifecycle,reason) {
+      return {...lifecycle,epoch:lifecycle.epoch+1,pending:null,queued:null,active:null,lastInvalidation:reason};
+    }
+
+    function startExecution(candidate,source,nowMs,queued = null) {
+      return { id:candidate.id,source,startedAtMs:nowMs,expiresAtMs:nowMs+ACTION_MS,counted:false,sequence:queued&&queued.sequence||null };
+    }
+
+    function resolveAction(snapshot,lifecycle,nowMs,wallNowMs) {
+      let next = lifecycle;
+      let event = null;
+      const previous = lifecycle.active?.id || lifecycle.lastExecutedId || "hold";
+      const candidates = evaluateCandidates(snapshot,previous);
+      if (next.queued) {
+        const queued = next.queued;
+        const currentWallMs = Number.isFinite(wallNowMs) ? wallNowMs : queued.receivedAtMs;
+        const queuedAgeMs = currentWallMs-queued.sentAtMs;
+        if (queuedAgeMs<0 || queuedAgeMs>MAX_RESPONSE_AGE_MS) {
+          const fallback = chooseFallback(candidates);
+          const active = startExecution(fallback,"local",nowMs);
+          next = {...next,queued:null,active};
+          event = {type:"override",reason:"age",selected:queued.id,replacement:fallback.id};
+          return {lifecycle:next,execution:active,event,candidates};
+        }
+        const selected = candidates.find((candidate)=>candidate.id===queued.id);
+        if (selected && selected.safe) {
+          const active = startExecution(selected,"jev",nowMs,queued);
+          next = {...next,queued:null,active};
+          return {lifecycle:next,execution:active,event:null,candidates};
+        }
+        const fallback = chooseFallback(candidates);
+        const reason = selected && !selected.inBounds ? "arena_bound" : "unsafe_on_arrival";
+        const active = startExecution(fallback,"local",nowMs);
+        next = {...next,queued:null,active};
+        event = {type:"override",reason,selected:queued.id,replacement:fallback.id};
+        return {lifecycle:next,execution:active,event,candidates};
+      }
+      if (next.active && nowMs < next.active.expiresAtMs) {
+        const remainingMs = next.active.expiresAtMs-nowMs;
+        const current = evaluateCandidates(snapshot,next.active.id,{moveMs:remainingMs,horizonMs:LOOKAHEAD_MS}).find((candidate)=>candidate.id===next.active.id);
+        if (current && current.safe) return {lifecycle:next,execution:next.active,event:null,candidates};
+        const fallback = chooseFallback(candidates);
+        const reason = current && !current.inBounds ? "arena_bound" : "new_collision";
+        const active = startExecution(fallback,"local",nowMs);
+        next = {...next,active};
+        event = {type:"override",reason,selected:lifecycle.active.id,replacement:fallback.id};
+        return {lifecycle:next,execution:active,event,candidates};
+      }
+      if (next.active) event = {type:"override",reason:"expiry",selected:next.active.id,replacement:null};
+      const fallback = chooseFallback(candidates);
+      const active = startExecution(fallback,"local",nowMs);
+      next = {...next,active};
+      if (event) event.replacement=fallback.id;
+      return {lifecycle:next,execution:active,event,candidates};
+    }
+
+    function advancePlayer(player,execution,dtSeconds,arena,nowMs) {
+      const requestedMs = Math.max(0,dtSeconds*1000);
+      const remainingMs = Math.max(0,execution.expiresAtMs-nowMs);
+      const appliedMs = Math.min(requestedMs,remainingMs);
+      const velocity = velocityFor(execution.id);
+      const displacement = {x:velocity.x*appliedMs/1000,y:velocity.y*appliedMs/1000};
+      return { player:{...player,x:clamp(player.x+displacement.x,arena.left,arena.right),y:clamp(player.y+displacement.y,arena.top,arena.bottom)}, appliedMs, unconsumedMs:requestedMs-appliedMs, displacement };
+    }
+
+    function markExecutionApplied(lifecycle,appliedMs) {
+      if (!lifecycle.active || lifecycle.active.counted || appliedMs<=0) return lifecycle;
+      const active = {...lifecycle.active,counted:true};
+      return {...lifecycle,active,lastExecutedId:active.id,executedCount:lifecycle.executedCount+1,jevExecutedCount:lifecycle.jevExecutedCount+(active.source==="jev"?1:0)};
+    }
+
+    function waveProfile(wave) {
+      const profiles = [{enemyType:"scout",bulletPattern:"aimed"},{enemyType:"swarm",bulletPattern:"spray"},{enemyType:"tank",bulletPattern:"sweep"}];
+      return Object.freeze({...profiles[(Math.max(1,wave)-1)%profiles.length],difficulty:"normal"});
+    }
+    function nextWaveState(state) { const wave=state.wave+1; return {wave,profile:waveProfile(wave)}; }
+    function rollingCompletedRate(events,nowMs,windowMs=10000) { return events.filter((at)=>at>nowMs-windowMs&&at<=nowMs).length/(windowMs/1000); }
+
+    globalThis.SpaceDecisionCore = Object.freeze({ ACTION_MS,LOOKAHEAD_MS,ACTION_SPEED,MAX_RESPONSE_AGE_MS,SAFETY_MARGIN_PX,ACTION_IDS,velocityFor,arenaFor,planAction,sweptContact,segmentClearance,evaluateCandidates,chooseFallback,shouldRequestModel,createLifecycle,makeRequestRecord,validateReply,acceptReply,clearPendingIfCurrent,invalidateLifecycle,resolveAction,advancePlayer,markExecutionApplied,waveProfile,nextWaveState,rollingCompletedRate });
+  })();
+  </script>
+
+  <script>
+  (() => {
+    "use strict";
+    const core = globalThis.SpaceDecisionCore;
+    const $ = (id) => document.getElementById(id);
+    const canvas = $("game");
+    const ctx = canvas.getContext("2d");
+    const W=canvas.width,H=canvas.height,REQUEST_INTERVAL_MS=450;
+    const random=(min,max)=>min+Math.random()*(max-min);
+    const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+    const stars=Array.from({length:100},()=>({x:random(0,W),y:random(0,H),speed:random(12,70),size:random(.5,2),alpha:random(.2,.8)}));
+    const player={x:W/2,y:H-70,w:20,h:18,speed:280,cooldown:0,invincible:0};
+    let playerBullets=[],enemyBullets=[],enemies=[],particles=[],keys=new Set(),pointerTarget=null;
+    let game={wave:1,score:0,lives:3,profile:core.waveProfile(1)};
+    let controller=core.createLifecycle(1),autopilot=true,paused=false,gameOver=false,waveActive=false;
+    let simElapsedMs=0,lastFrame=performance.now(),nextRequestAt=0,enemyFireClock=.8,waveClock=0;
+    let runId="",history=[],lastCandidates=[],lastSelected="none",lastExecuted="local · hold",lastOverride="none";
+    let callCount=0,failureCount=0,completionEvents=[],lastApi={latency_ms:null,api_token_throughput:null,usage:{input_tokens:null,output_tokens:null}};
+
+    function addHistory(kind,text,tone="") { history.unshift({kind,text,tone}); history=history.slice(0,7); $("history").innerHTML=history.map((item)=>`<div class="history-item ${item.tone}"><b>${item.kind}</b><span>${item.text}</span><span>${(simElapsedMs/1000).toFixed(1)}s</span></div>`).join(""); }
+    function snapshot() {
+      const factor=1;
+      return {width:W,height:H,player:{...player},waveProfile:game.profile,
+        bullets:enemyBullets.map((b)=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,w:8,h:8,kind:"bullet"})),
+        enemies:enemies.map((e)=>({x:e.x,y:e.y,vx:e.vx*factor+Math.sin(waveClock*2+e.phase)*(e.type==="swarm"?28:9),vy:(18+game.wave*1.5)*factor,w:e.w,h:e.h,kind:"enemy"}))};
+    }
+    function invalidate(reason) {
+      const pending=controller.pending;
+      if (pending?.abortController) pending.abortController.abort();
+      controller=core.invalidateLifecycle(controller,reason);
+      lastOverride=reason;
+    }
+    function setPaused(value) { if (paused===value) return; paused=value; invalidate(value?"paused":"resume"); $("pause-button").textContent=paused?"Resume":"Pause"; }
+    function candidatePayload(candidates) { return candidates.filter((c)=>c.safe).map((c)=>({id:c.id,clearance_px:c.clearance===null?null:Number(c.clearance.toFixed(3)),center_cost:Number(c.centerCost.toFixed(4)),room_px:Number(c.room.toFixed(3)),switch_cost:c.switchCost,soft_cost:Number(c.softCost.toFixed(4))})); }
+
+    async function requestDecision() {
+      if (paused||gameOver||!autopilot||controller.pending) return;
+      const candidates=core.evaluateCandidates(snapshot(),controller.active?.id||controller.lastExecutedId);
+      if (!core.shouldRequestModel(candidates)) return;
+      const abortController=new AbortController();
+      const made=core.makeRequestRecord(controller,candidates,performance.now(),abortController);
+      controller=made.lifecycle;
+      const record=made.record;
+      $("request-status").textContent=`pending · E${record.epoch}/S${record.sequence}`;
+      const body={epoch:record.epoch,sequence:record.sequence,player:{x:player.x,y:player.y},previous_action:controller.lastExecutedId,candidates:candidatePayload(candidates)};
+      const timeout=window.setTimeout(()=>abortController.abort(),2500);
+      try {
+        const response=await fetch("/api/decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:abortController.signal});
+        if (!response.ok) throw new Error(`bridge ${response.status}`);
+        const reply=await response.json();
+        const completedAt=performance.now();
+        if (record.epoch!==controller.epoch) return;
+        completionEvents.push(completedAt); completionEvents=completionEvents.filter((at)=>at>completedAt-10000); callCount+=1; lastApi=reply;
+        if (!reply.api_ok) failureCount+=1;
+        const accepted=core.acceptReply(reply,record,controller,completedAt,{running:!paused&&!gameOver,autopilot});
+        controller=accepted.lifecycle;
+        if (accepted.event.type==="selected") { lastSelected=`${accepted.event.id} · E${accepted.event.epoch}/S${accepted.event.sequence} · ${accepted.event.ageMs.toFixed(0)} ms`; addHistory("selected",lastSelected,"ok"); }
+        else { lastSelected=`${reply.movement||"none"} · rejected (${accepted.event.reason})`; lastOverride=accepted.event.reason; addHistory("rejected",lastSelected,"warn"); }
+      } catch (error) {
+        if (record.epoch===controller.epoch&&controller.pending===record) { completionEvents.push(performance.now()); callCount+=1; failureCount+=1; lastSelected="none · request failed"; lastOverride=error.name==="AbortError"?"timeout":error.message; addHistory("failure",lastOverride,"bad"); }
+      } finally {
+        window.clearTimeout(timeout);
+        controller=core.clearPendingIfCurrent(controller,record);
+        nextRequestAt=performance.now()+REQUEST_INTERVAL_MS;
+      }
+    }
+
+    function updateAutopilot(dt) {
+      let remainingMs=dt*1000;
+      let nowMs=simElapsedMs;
+      const wallNowMs=performance.now();
+      while (remainingMs>1e-7) {
+        const resolved=core.resolveAction(snapshot(),controller,nowMs,wallNowMs);
+        controller=resolved.lifecycle; lastCandidates=resolved.candidates;
+        if (resolved.event) { lastOverride=`${resolved.event.reason}: ${resolved.event.selected} → ${resolved.event.replacement}`; addHistory("override",lastOverride,"warn"); }
+        const arena=core.arenaFor(W,H,player.w,player.h);
+        const moved=core.advancePlayer(player,resolved.execution,remainingMs/1000,arena,nowMs);
+        player.x=moved.player.x; player.y=moved.player.y;
+        controller=core.markExecutionApplied(controller,moved.appliedMs);
+        lastExecuted=`${resolved.execution.source} · ${resolved.execution.id} · ${Math.max(0,resolved.execution.expiresAtMs-(nowMs+moved.appliedMs)).toFixed(0)} ms · Δ${moved.displacement.x.toFixed(1)},${moved.displacement.y.toFixed(1)}`;
+        if (!resolved.execution.counted&&moved.appliedMs>0) addHistory("executed",`${resolved.execution.source} · ${resolved.execution.id}`,resolved.execution.source==="jev"?"ok":"");
+        if (moved.appliedMs<=0&&moved.unconsumedMs>=remainingMs) break;
+        remainingMs=moved.unconsumedMs; nowMs+=moved.appliedMs;
+      }
+    }
+
+    function updateManual(dt) {
+      const arena=core.arenaFor(W,H,player.w,player.h);
+      const ax=(keys.has("arrowright")||keys.has("d")?1:0)-(keys.has("arrowleft")||keys.has("a")?1:0);
+      const ay=(keys.has("arrowdown")||keys.has("s")?1:0)-(keys.has("arrowup")||keys.has("w")?1:0);
+      const mag=Math.hypot(ax,ay)||1;
+      player.x=clamp(player.x+ax/mag*player.speed*dt,arena.left,arena.right); player.y=clamp(player.y+ay/mag*player.speed*dt,arena.top,arena.bottom);
+      if (pointerTarget) { player.x=clamp(player.x+(pointerTarget.x-player.x)*Math.min(1,dt*11),arena.left,arena.right); player.y=clamp(player.y+(pointerTarget.y-player.y)*Math.min(1,dt*11),arena.top,arena.bottom); }
+      lastExecuted=`manual · Δ${(ax/mag*player.speed*dt).toFixed(1)},${(ay/mag*player.speed*dt).toFixed(1)}`;
+      lastCandidates=core.evaluateCandidates(snapshot(),controller.lastExecutedId);
+    }
+
+    function createEnemy(type,index,count) { const tank=type==="tank",swarm=type==="swarm"; const w=tank?48:swarm?23:32,h=tank?34:swarm?19:24; return {type,x:75+(index%Math.min(count,8))*112+random(-20,20),y:-35-Math.floor(index/8)*62,w,h,hp:tank?4:swarm?1:2,maxHp:tank?4:swarm?1:2,vx:(swarm?76:35)*(index%2?1:-1),phase:random(0,Math.PI*2)}; }
+    function startWave() { game.profile=core.waveProfile(game.wave); const t=game.profile.enemyType; const count=t==="tank"?Math.min(4+Math.floor(game.wave/3),6):t==="swarm"?Math.min(10+game.wave,20):Math.min(6+Math.floor(game.wave/2),12); enemies=Array.from({length:count},(_,i)=>createEnemy(t,i,count)); playerBullets=[];enemyBullets=[];enemyFireClock=.8;waveClock=0;waveActive=true; }
+    function nextWave() { if (!waveActive||gameOver) return; waveActive=false; const next=core.nextWaveState(game); game.wave=next.wave;game.profile=next.profile;startWave(); }
+    function enemyShoot() { if (!enemies.length)return; const enemy=enemies[Math.floor(Math.random()*enemies.length)],dx=player.x-enemy.x,dy=player.y-enemy.y,angle=Math.atan2(dy,dx),speed=169; const add=(a,s=speed)=>enemyBullets.push({x:enemy.x,y:enemy.y+enemy.h/2,vx:Math.cos(a)*s,vy:Math.sin(a)*s,radius:4}); if(game.profile.bulletPattern==="spray")[-.18,0,.18].forEach((o)=>add(angle+o,speed*.88)); else if(game.profile.bulletPattern==="sweep")enemyBullets.push({x:random(38,W-38),y:-8,vx:0,vy:speed*.92,radius:5,sweep:true}); else add(angle); }
+    const overlaps=(a,b)=>Math.abs(a.x-b.x)<(a.w||a.radius*2)/2+(b.w||b.radius*2)/2&&Math.abs(a.y-b.y)<(a.h||a.radius*2)/2+(b.h||b.radius*2)/2;
+    function hitPlayer() { if(player.invincible>0||gameOver)return;game.lives-=1;player.invincible=1.1;addParticles(player.x,player.y,"#ff7086",22);if(game.lives<=0){gameOver=true;waveActive=false;invalidate("game_over");} }
+    function addParticles(x,y,color,count=8){for(let i=0;i<count;i+=1)particles.push({x,y,vx:random(-120,120),vy:random(-120,120),life:random(.3,.8),maxLife:.8,color});}
+
+    function update(dt) {
+      if(paused||gameOver)return;
+      stars.forEach((s)=>{s.y+=s.speed*dt;if(s.y>H){s.y=0;s.x=random(0,W);}});particles=particles.filter((p)=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;return p.life>0;});if(player.invincible>0)player.invincible-=dt;
+      if(autopilot)updateAutopilot(dt);else updateManual(dt);
+      player.cooldown-=dt;if(player.cooldown<=0){playerBullets.push({x:player.x,y:player.y-20,vy:-580,radius:3});player.cooldown=.17;}
+      playerBullets=playerBullets.filter((b)=>{b.y+=b.vy*dt;return b.y>-15;});
+      enemyBullets=enemyBullets.filter((b)=>{b.x+=b.vx*dt;b.y+=b.vy*dt;if(overlaps({x:b.x,y:b.y,w:8,h:8},player)){hitPlayer();return false;}return b.y<H+20&&b.x>-20&&b.x<W+20;});
+      enemies.forEach((e)=>{e.y+=(18+game.wave*1.5)*dt;e.x+=(e.vx+Math.sin(waveClock*2+e.phase)*(e.type==="swarm"?28:9))*dt;if(e.x<e.w/2||e.x>W-e.w/2)e.vx*=-1;if(overlaps(e,player))hitPlayer();if(e.y>H+25)e.y=-20;});
+      for(let i=playerBullets.length-1;i>=0;i-=1){for(let j=enemies.length-1;j>=0;j-=1){const b=playerBullets[i],e=enemies[j];if(b&&overlaps({x:b.x,y:b.y,w:7,h:14},e)){playerBullets.splice(i,1);e.hp-=1;if(e.hp<=0){game.score+=e.type==="tank"?80:e.type==="swarm"?12:28;addParticles(e.x,e.y,e.type==="tank"?"#ffc86b":"#6e8cff",12);enemies.splice(j,1);}break;}}}
+      enemyFireClock-=dt;if(enemyFireClock<=0&&enemies.length){enemyShoot();enemyFireClock=Math.max(.72,1.9);}waveClock+=dt;if(!enemies.length&&waveActive)nextWave();
+      simElapsedMs+=dt*1000;if(performance.now()>=nextRequestAt)requestDecision();
+    }
+
+    function updatePanel(now=performance.now()) {
+      $("hud-wave").textContent=game.wave;$("hud-score").textContent=game.score.toLocaleString();$("hud-lives").textContent="♥".repeat(Math.max(0,game.lives))+"♡".repeat(Math.max(0,3-game.lives));$("hud-run").textContent=runId;$("hud-elapsed").textContent=(simElapsedMs/1000).toFixed(1)+" s";$("hud-mode").textContent=gameOver?"ENDED":paused?"PAUSED":autopilot?"AUTO":"MANUAL";
+      $("selected").textContent=lastSelected;$("executed").textContent=lastExecuted;$("override").textContent=lastOverride;
+      const safe=lastCandidates.filter((c)=>c.safe),contacts=lastCandidates.filter((c)=>c.inBounds&&c.collisionTime!==null).map((c)=>c.collisionTime);const earliest=contacts.length?Math.min(...contacts):null;$("safety").textContent=`${safe.length}/9 eligible · ${earliest===null?"none within 0.6 s":`first contact ${earliest.toFixed(3)} s`}${safe.length?"":" · no safe candidate"}`;
+      $("request-status").textContent=controller.pending?`pending · E${controller.pending.epoch}/S${controller.pending.sequence}`:`idle · E${controller.epoch}`;
+      $("candidate-grid").innerHTML=lastCandidates.map((c)=>`<div class="candidate ${!c.inBounds?"bound":c.safe?"safe":"risk"}"><b>${c.id}</b><small>${!c.inBounds?"arena bound":c.safe?`safe · ${c.clearance===null?"clear":c.clearance.toFixed(0)+" px"}`:`contact ${c.collisionTime.toFixed(2)} s`}</small></div>`).join("");
+      $("metric-latency").textContent=Number.isFinite(lastApi.latency_ms)?lastApi.latency_ms.toFixed(1):"—";$("metric-token-rate").textContent=Number.isFinite(lastApi.api_token_throughput)?lastApi.api_token_throughput.toFixed(1):"—";$("metric-completed-rate").textContent=core.rollingCompletedRate(completionEvents,now,10000).toFixed(2);$("metric-usage").textContent=`${lastApi.usage?.input_tokens??"—"} / ${lastApi.usage?.output_tokens??"—"}`;$("metric-calls").textContent=callCount;$("metric-failures").textContent=failureCount;$("metric-accepted").textContent=controller.acceptedCount;$("metric-applied").textContent=controller.jevExecutedCount;
+    }
+
+    function draw() {
+      const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#07152c");g.addColorStop(1,"#020711");ctx.fillStyle=g;ctx.fillRect(0,0,W,H);stars.forEach((s)=>{ctx.globalAlpha=s.alpha;ctx.fillStyle="#c6dcff";ctx.fillRect(s.x,s.y,s.size,s.size);});ctx.globalAlpha=1;
+      ctx.strokeStyle="rgba(100,155,228,.08)";for(let x=0;x<W;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}for(let y=0;y<H;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+      playerBullets.forEach((b)=>{ctx.fillStyle="#e8f1ff";ctx.beginPath();ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);ctx.fill();});enemyBullets.forEach((b)=>{ctx.fillStyle=b.sweep?"#ffc86b":"#ff7086";ctx.beginPath();ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);ctx.fill();});
+      enemies.forEach((e)=>{ctx.save();ctx.translate(e.x,e.y);ctx.fillStyle=e.type==="tank"?"#ffc86b":e.type==="swarm"?"#c47bff":"#6e8cff";ctx.fillRect(-e.w/2,-e.h/2,e.w,e.h);ctx.restore();});
+      if(!(player.invincible>0&&Math.floor(player.invincible*12)%2===0)){ctx.save();ctx.translate(player.x,player.y);ctx.fillStyle="#5ce1e6";ctx.beginPath();ctx.moveTo(0,-13);ctx.lineTo(11,8);ctx.lineTo(0,5);ctx.lineTo(-11,8);ctx.closePath();ctx.fill();ctx.restore();}
+      particles.forEach((p)=>{ctx.globalAlpha=Math.max(0,p.life/p.maxLife);ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,3,3);});ctx.globalAlpha=1;
+      if(paused||gameOver){ctx.fillStyle="rgba(2,7,17,.68)";ctx.fillRect(0,0,W,H);ctx.textAlign="center";ctx.fillStyle="#e8f1ff";ctx.font="800 28px Inter,sans-serif";ctx.fillText(gameOver?"Run ended":"Paused",W/2,H/2);ctx.textAlign="left";}
+    }
+
+    function resetGame() { if(controller.pending?.abortController)controller.pending.abortController.abort();runId=(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)).slice(0,8);simElapsedMs=0;game={wave:1,score:0,lives:3,profile:core.waveProfile(1)};controller=core.createLifecycle(controller.epoch+1);autopilot=true;paused=false;gameOver=false;player.x=W/2;player.y=H-70;player.invincible=0;player.cooldown=0;particles=[];history=[];callCount=0;failureCount=0;completionEvents=[];lastSelected="none";lastExecuted="local · hold";lastOverride="none";lastApi={latency_ms:null,api_token_throughput:null,usage:{input_tokens:null,output_tokens:null}};startWave();lastCandidates=core.evaluateCandidates(snapshot(),"hold");nextRequestAt=performance.now();$("autopilot-button").textContent="Auto pilot: ON";$("pause-button").textContent="Pause";addHistory("run",runId); }
+    function frame(now){const dt=Math.min(.034,Math.max(0,(now-lastFrame)/1000));lastFrame=now;update(dt);draw();updatePanel(now);requestAnimationFrame(frame);}
+    function canvasPoint(event){const rect=canvas.getBoundingClientRect(),arena=core.arenaFor(W,H,player.w,player.h);return{x:clamp((event.clientX-rect.left)*W/rect.width,arena.left,arena.right),y:clamp((event.clientY-rect.top)*H/rect.height,arena.top,arena.bottom)};}
+    canvas.addEventListener("pointermove",(event)=>{pointerTarget=canvasPoint(event);});canvas.addEventListener("pointerleave",()=>{pointerTarget=null;});
+    window.addEventListener("keydown",(event)=>{const key=event.key.toLowerCase();if(["arrowleft","arrowright","arrowup","arrowdown","w","a","s","d"," "].includes(key))event.preventDefault();if(key===" ")setPaused(!paused);else keys.add(key);});window.addEventListener("keyup",(event)=>keys.delete(event.key.toLowerCase()));
+    $("autopilot-button").addEventListener("click",()=>{autopilot=!autopilot;pointerTarget=null;invalidate(autopilot?"autopilot_enabled":"manual");$("autopilot-button").textContent=autopilot?"Auto pilot: ON":"Auto pilot: OFF";nextRequestAt=performance.now();});
+    $("pause-button").addEventListener("click",()=>setPaused(!paused));$("restart-button").addEventListener("click",resetGame);
+    resetGame();requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>

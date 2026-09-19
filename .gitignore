@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+*.log
+node_modules/
+data/
+benchmark-results/
