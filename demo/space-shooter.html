@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jev bounded movement decision demo</title>
+  <title>djev-authoritative space shooter</title>
   <style>
     :root { color-scheme: dark; --bg:#050a14; --panel:#0b1424; --line:#20324d; --text:#e8f1ff; --muted:#91a6c5; --cyan:#5ce1e6; --blue:#6e8cff; --amber:#ffc86b; --red:#ff7086; --green:#79e6a6; }
     * { box-sizing:border-box; }
@@ -12,8 +12,8 @@
     header { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:14px; }
     h1 { margin:0; font-size:clamp(22px,3vw,34px); letter-spacing:-.03em; }
     .eyebrow { color:var(--cyan); font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
-    .sub { color:var(--muted); max-width:760px; }
-    .layout { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(330px,.8fr); gap:14px; align-items:start; }
+    .sub { color:var(--muted); max-width:800px; }
+    .layout { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(350px,.85fr); gap:14px; align-items:start; }
     .panel { background:linear-gradient(180deg,rgba(15,28,48,.96),rgba(7,14,26,.96)); border:1px solid var(--line); border-radius:14px; box-shadow:0 20px 55px rgba(0,0,0,.28); overflow:hidden; }
     #game-panel { position:relative; }
     canvas { width:100%; display:block; aspect-ratio:48/31; background:#020711; }
@@ -28,25 +28,31 @@
     .section { padding:14px; }
     .section + .section { border-top:1px solid var(--line); }
     .section h2 { margin:0 0 10px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; }
-    .statusline { display:grid; grid-template-columns:78px 1fr; gap:8px; padding:5px 0; border-bottom:1px solid rgba(56,80,113,.35); }
+    .statusline { display:grid; grid-template-columns:92px 1fr; gap:8px; padding:5px 0; border-bottom:1px solid rgba(56,80,113,.35); }
     .statusline:last-child { border-bottom:0; }
     .statusline span:first-child { color:var(--muted); }
     .statusline strong { min-width:0; overflow-wrap:anywhere; }
     .candidate-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
     .candidate { border:1px solid var(--line); border-radius:7px; padding:6px; min-width:0; background:#091528; }
     .candidate b { display:block; font-size:10px; overflow:hidden; text-overflow:ellipsis; }
-    .candidate small { color:var(--muted); font-size:9px; }
-    .candidate.safe { border-color:rgba(121,230,166,.55); }
+    .candidate small { color:var(--muted); font-size:9px; display:block; line-height:1.2; }
+    .candidate.clear { border-color:rgba(121,230,166,.55); }
     .candidate.risk { border-color:rgba(255,112,134,.55); }
-    .candidate.bound { opacity:.55; }
+    .candidate.bound { opacity:.72; }
     .metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
     .metric { background:#07111f; border:1px solid var(--line); border-radius:8px; padding:8px; }
     .metric b { display:block; font-size:17px; }
     .metric span { color:var(--muted); font-size:9px; line-height:1.25; display:block; }
-    .history { display:grid; gap:6px; max-height:180px; overflow:auto; }
-    .history-item { display:grid; grid-template-columns:62px 1fr auto; gap:7px; color:var(--muted); font-size:11px; }
+    .tuning-grid { display:grid; gap:10px; }
+    .slider-row { display:grid; grid-template-columns:112px minmax(90px,1fr) 58px; gap:9px; align-items:center; color:var(--muted); font-size:12px; }
+    .slider-row b { color:var(--text); text-align:right; font-variant-numeric:tabular-nums; }
+    input[type="range"] { width:100%; accent-color:var(--cyan); }
+    .history { display:grid; gap:6px; max-height:210px; overflow:auto; }
+    .history-item { display:grid; grid-template-columns:72px 1fr auto; gap:7px; color:var(--muted); font-size:11px; }
     .ok { color:var(--green)!important; } .warn { color:var(--amber)!important; } .bad { color:var(--red)!important; }
     .note { color:var(--muted); font-size:10px; margin-top:8px; }
+    .http-warning { display:none; width:100%; color:var(--amber); font-size:11px; border:1px solid rgba(255,200,107,.45); border-radius:8px; padding:8px 10px; background:rgba(255,200,107,.08); }
+    .http-warning.show { display:block; }
     @media (max-width:980px) { .layout { grid-template-columns:1fr; } .hud { grid-template-columns:repeat(3,1fr); } }
     @media (max-width:560px) { .shell { width:100%; margin:0; } .panel { border-radius:0; } header { padding:12px; } .hud { grid-template-columns:repeat(2,1fr); } }
   </style>
@@ -54,8 +60,8 @@
 <body>
   <main class="shell">
     <header>
-      <div><div class="eyebrow">Jev · structured choice under changing state</div><h1>Bounded movement decision demo</h1></div>
-      <div class="sub">Local swept checks gate nine short actions. Jev selects one eligible action; freshness and current-state checks decide whether it is actually executed.</div>
+      <div><div class="eyebrow">djev · API-authoritative path + fire + intent</div><h1>Space shooter live control trace</h1></div>
+      <div class="sub">djev returns three atomic choices: one of nine movement paths, shoot/cease, and intent — 避险 (evade), 回中 (recover), or 稳定站位 (position). Each accepted command authorizes at most 500 ms; any missing, invalid, or stale choice means neutral hold plus cease.</div>
     </header>
     <div class="layout">
       <section id="game-panel" class="panel">
@@ -64,7 +70,7 @@
           <div><span class="label">Wave</span><span class="value" id="hud-wave">1</span></div>
           <div><span class="label">Score</span><span class="value" id="hud-score">0</span></div>
           <div><span class="label">Hull</span><span class="value" id="hud-lives">♥♥♥</span></div>
-          <div><span class="label">Run ID</span><span class="value" id="hud-run">—</span></div>
+          <div><span class="label">Run ID</span><span class="value" id="hud-run">starting</span></div>
           <div><span class="label">Sim elapsed</span><span class="value" id="hud-elapsed">0.0 s</span></div>
           <div><span class="label">Mode</span><span class="value" id="hud-mode">AUTO</span></div>
         </div>
@@ -72,36 +78,49 @@
           <button id="autopilot-button">Auto pilot: ON</button>
           <button id="pause-button">Pause</button>
           <button id="restart-button">Restart run</button>
-          <span class="sub">Move manually with WASD/arrows or pointer. Space pauses.</span>
+          <span id="http-warning" class="http-warning">This page is open as a local file, so djev and trace HTTP endpoints are unreachable. Serve it from the preview/server HTTP URL for model-controlled evidence; local file play remains neutral hold plus cease on failures.</span>
+          <span class="sub">Manual input, pause, reset, profile changes, or lag invalidate benchmark qualification for the active run.</span>
         </div>
       </section>
       <aside class="side">
         <section id="decision-panel" class="panel">
           <div class="section">
-            <h2>Decision boundary</h2>
-            <div class="statusline"><span>Selected</span><strong id="selected">none</strong></div>
-            <div class="statusline"><span>Executed</span><strong id="executed">local · hold</strong></div>
-            <div class="statusline"><span>Override</span><strong id="override">none</strong></div>
-            <div class="statusline"><span>Safety</span><strong id="safety">scanning</strong></div>
-            <div class="statusline"><span>Request</span><strong id="request-status">idle</strong></div>
+            <h2>Difficulty</h2>
+            <div class="tuning-grid">
+              <label class="slider-row"><span>Bullet density</span><input id="bullet-density" type="range" min="1" max="4" step="0.25" value="1" /><b id="bullet-density-value">1.00x</b></label>
+              <label class="slider-row"><span>Enemy density</span><input id="enemy-density" type="range" min="1" max="3" step="0.25" value="1" /><b id="enemy-density-value">1.00x</b></label>
+              <label class="slider-row"><span>Fast bullets</span><input id="fast-bullet-ratio" type="range" min="0" max="0.85" step="0.05" value="0" /><b id="fast-bullet-ratio-value">0%</b></label>
+              <label class="slider-row"><span>Fast speed</span><input id="fast-bullet-speed" type="range" min="1.1" max="2.4" step="0.1" value="1.6" /><b id="fast-bullet-speed-value">1.60x</b></label>
+            </div>
           </div>
           <div class="section">
-            <h2>All nine candidates</h2>
+            <h2>Authoritative command</h2>
+            <div class="statusline"><span>djev</span><strong id="selected">none</strong></div>
+            <div class="statusline"><span>Executing</span><strong id="executed">neutral · hold · cease</strong></div>
+            <div class="statusline"><span>Pending</span><strong id="request-status">idle</strong></div>
+            <div class="statusline"><span>Neutral</span><strong id="neutral-reason">startup</strong></div>
+            <div class="statusline"><span>Trace</span><strong id="trace-path">not started</strong></div>
+            <div class="statusline"><span>Run integrity</span><strong id="qualification">pending trace</strong></div>
+            <div class="note">Trace completion confirms recording integrity; it does not mean the survival benchmark passed.</div>
+            <div class="note">Intent and API p report the model's selected intent and returned probability. They do not steer local actions; p is not a calibrated survival estimate.</div>
+          </div>
+          <div class="section">
+            <h2>All nine movement observations</h2>
             <div id="candidate-grid" class="candidate-grid"></div>
+            <div class="note">All nine medium paths carry inline factual criteria: collision boolean and time, gap, progress toward center, and wall room under a fixed 500 ms max authorization. State includes the hold gap without duplicating a paths table. Additional enemy-spacing and shot forecasts are UI/debug-only, not live choice fields. Contact is post-arrival through the common horizon while currently vulnerable; wait-prefix contact is separate.</div>
           </div>
           <div class="section">
             <h2>API observations</h2>
             <div class="metrics">
-              <div class="metric"><b id="metric-latency">—</b><span>round trip ms</span></div>
-              <div class="metric"><b id="metric-token-rate">—</b><span>API token throughput (input+output), tok/s</span></div>
+              <div class="metric"><b id="metric-latency">260.0</b><span>median completed latency ms</span></div>
+              <div class="metric"><b id="metric-token-rate">—</b><span>API token throughput, tok/s</span></div>
               <div class="metric"><b id="metric-completed-rate">0.00</b><span>rolling completed requests/s</span></div>
               <div class="metric"><b id="metric-usage">— / —</b><span>input / output tokens</span></div>
               <div class="metric"><b id="metric-calls">0</b><span>completed calls</span></div>
               <div class="metric"><b id="metric-failures">0</b><span>API/transport failures</span></div>
-              <div class="metric"><b id="metric-accepted">0</b><span>accepted choices</span></div>
-              <div class="metric"><b id="metric-applied">0</b><span>Jev commands applied</span></div>
+              <div class="metric"><b id="metric-accepted">0</b><span>valid djev commands</span></div>
+              <div class="metric"><b id="metric-applied">0</b><span>applied djev commands</span></div>
             </div>
-            <div class="note">Neither rate is decode TPS. Token throughput divides reported input+output work by bridge round-trip time; completion rate counts finished requests in a rolling 10 s window.</div>
           </div>
           <div class="section"><h2>Recent events</h2><div id="history" class="history"></div></div>
         </section>
@@ -112,57 +131,252 @@
   <script id="space-decision-core">
   (() => {
     "use strict";
-    const ACTION_MS = 240;
-    const LOOKAHEAD_MS = 600;
-    const ACTION_SPEED = 112;
-    const MAX_RESPONSE_AGE_MS = 600;
-    const SAFETY_MARGIN_PX = 4;
-    const ACTION_IDS = Object.freeze(["hold","left","right","up","down","up_left","up_right","down_left","down_right"]);
-    const DIRECTIONS = Object.freeze({ hold:[0,0], left:[-1,0], right:[1,0], up:[0,-1], down:[0,1], up_left:[-1,-1], up_right:[1,-1], down_left:[-1,1], down_right:[1,1] });
-    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-    function velocityFor(actionId, speed = ACTION_SPEED) {
+    const ENGINE_VERSION = "space-decision-core-v2";
+    const DT_MS = 1000 / 60;
+    const DT_SECONDS = 1 / 60;
+    const WIDTH = 960;
+    const HEIGHT = 620;
+    const PLAYER_W = 20;
+    const PLAYER_H = 18;
+    const PLAYER_START_X = WIDTH / 2;
+    const PLAYER_START_Y = HEIGHT - 70;
+    const PLAYER_SPEED = 112;
+    const MANUAL_SPEED = 280;
+    const PLAYER_COOLDOWN_S = 0.17;
+    const PLAYER_SHOT_SPEED = -580;
+    const PLAYER_SHOT_RADIUS = 3;
+    const PLAYER_SHOT_BOX = Object.freeze({ w: 7, h: 14 });
+    const PLAYER_MUZZLE_Y = -20;
+    const HIT_INVINCIBILITY_S = 1.1;
+    const HOSTILE_BOX = Object.freeze({ w: 8, h: 8 });
+    const SAFETY_MARGIN_PX = 4;
+    const FORECAST_MIN_HORIZON_MS = 600;
+    const ACTION_IDS = Object.freeze(["hold","left","right","up","down","up_left","up_right","down_left","down_right"]);
+    const FIRE_IDS = Object.freeze(["shoot","cease"]);
+    const LEASE_TICKS = Object.freeze({ short: 15, medium: 30 });
+    const LEASE_MS = Object.freeze({ short: LEASE_TICKS.short * DT_MS, medium: LEASE_TICKS.medium * DT_MS });
+    const DIRECTIONS = Object.freeze({ hold:[0,0], left:[-1,0], right:[1,0], up:[0,-1], down:[0,1], up_left:[-1,-1], up_right:[1,-1], down_left:[-1,1], down_right:[1,1] });
+    const DEFAULT_DIFFICULTY = Object.freeze({ bulletDensity:1, enemyDensity:1, fastBulletRatio:0, fastBulletSpeed:1.6 });
+    const HARDEST_DIFFICULTY = Object.freeze({ bulletDensity:4, enemyDensity:3, fastBulletRatio:.85, fastBulletSpeed:2.4 });
+    const PRNG_VERSION = "xorshift32-v1";
+    const RULES = Object.freeze({
+      arena:{ width:WIDTH, height:HEIGHT },
+      dt_ms:DT_MS,
+      player:{ w:PLAYER_W, h:PLAYER_H, lives:3, speed:PLAYER_SPEED, manual_speed:MANUAL_SPEED, hit_invulnerability_s:HIT_INVINCIBILITY_S },
+      weapon:{ cooldown_s:PLAYER_COOLDOWN_S, shot_vy:PLAYER_SHOT_SPEED, shot_box:PLAYER_SHOT_BOX, muzzle_y:PLAYER_MUZZLE_Y },
+      hostile_box:HOSTILE_BOX,
+      enemy_fire_interval:{ baseline_s:.95, min_s:.18 },
+      leases_ticks:LEASE_TICKS,
+      action_ids:ACTION_IDS,
+      fire_ids:FIRE_IDS,
+      prng:PRNG_VERSION,
+    });
+
+    const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+    const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const rounded = (value, digits = 1) => Number(Number(value).toFixed(digits));
+    const clone = (value) => JSON.parse(JSON.stringify(value));
+
+    function normalizeDifficulty(input = {}) {
+      return {
+        bulletDensity: rounded(clamp(finite(input.bulletDensity, DEFAULT_DIFFICULTY.bulletDensity), 1, 4), 2),
+        enemyDensity: rounded(clamp(finite(input.enemyDensity, DEFAULT_DIFFICULTY.enemyDensity), 1, 3), 2),
+        fastBulletRatio: rounded(clamp(finite(input.fastBulletRatio, DEFAULT_DIFFICULTY.fastBulletRatio), 0, .85), 3),
+        fastBulletSpeed: rounded(clamp(finite(input.fastBulletSpeed, DEFAULT_DIFFICULTY.fastBulletSpeed), 1.1, 2.4), 2),
+      };
+    }
+
+    function normalizeSeed(seed) {
+      if (typeof seed === "number" && Number.isFinite(seed)) {
+        const out = seed >>> 0;
+        return out || 0x6d2b79f5;
+      }
+      const text = String(seed ?? "20260920");
+      let hash = 2166136261;
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619) >>> 0;
+      }
+      return hash || 0x6d2b79f5;
+    }
+
+    function random01(game) {
+      let x = game.rng.state >>> 0;
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      game.rng.state = x >>> 0 || 0x6d2b79f5;
+      return (game.rng.state >>> 0) / 4294967296;
+    }
+
+    function randomRange(game, low, high) {
+      return low + random01(game) * (high - low);
+    }
+
+    function entityId(game, prefix) {
+      const id = `${prefix}-${game.nextEntityId}`;
+      game.nextEntityId += 1;
+      return id;
+    }
+
+    function arenaFor(gameOrWidth = WIDTH, height = HEIGHT, playerWidth = PLAYER_W, playerHeight = PLAYER_H) {
+      const width = typeof gameOrWidth === "object" ? gameOrWidth.width : gameOrWidth;
+      const resolvedHeight = typeof gameOrWidth === "object" ? gameOrWidth.height : height;
+      return { left: playerWidth / 2, right: width - playerWidth / 2, top: playerHeight / 2, bottom: resolvedHeight - playerHeight / 2 };
+    }
+
+    function velocityFor(actionId, speed = PLAYER_SPEED) {
       const direction = DIRECTIONS[actionId];
-      if (!direction) throw new Error(`unknown action: ${actionId}`);
+      if (!direction) throw new Error(`unknown movement: ${actionId}`);
       const magnitude = Math.hypot(direction[0], direction[1]) || 1;
       return { x: direction[0] / magnitude * speed, y: direction[1] / magnitude * speed };
     }
 
-    function arenaFor(width, height, playerWidth, playerHeight) {
-      return { left:playerWidth/2, right:width-playerWidth/2, top:playerHeight/2, bottom:height-playerHeight/2 };
+    function waveProfile(wave) {
+      const profiles = [{enemyType:"scout",bulletPattern:"aimed"},{enemyType:"swarm",bulletPattern:"spray"},{enemyType:"tank",bulletPattern:"sweep"}];
+      return { ...profiles[(Math.max(1, wave) - 1) % profiles.length], difficulty:"normal" };
     }
 
-    function planAction(player, actionId, moveMs = ACTION_MS, horizonMs = LOOKAHEAD_MS, arena = arenaFor(960,620,player.w,player.h)) {
-      const velocity = velocityFor(actionId);
-      const moveSeconds = Math.max(0, Math.min(moveMs, horizonMs)) / 1000;
-      const horizonSeconds = Math.max(0, horizonMs) / 1000;
-      const endpoint = { x:player.x + velocity.x * moveSeconds, y:player.y + velocity.y * moveSeconds };
-      const inBounds = player.x >= arena.left && player.x <= arena.right && player.y >= arena.top && player.y <= arena.bottom && endpoint.x >= arena.left && endpoint.x <= arena.right && endpoint.y >= arena.top && endpoint.y <= arena.bottom;
-      const segments = [];
-      if (moveSeconds > 0) segments.push({ t0:0, t1:moveSeconds, p0:{x:player.x,y:player.y}, p1:{...endpoint} });
-      if (horizonSeconds > moveSeconds) segments.push({ t0:moveSeconds, t1:horizonSeconds, p0:{...endpoint}, p1:{...endpoint} });
-      if (!segments.length) segments.push({ t0:0, t1:0, p0:{x:player.x,y:player.y}, p1:{x:player.x,y:player.y} });
-      return { id:actionId, inBounds, segments, endpoint, velocity };
+    function baseEnemyCountForWave(wave, profile = waveProfile(wave)) {
+      if (profile.enemyType === "tank") return Math.min(4 + Math.floor(wave / 3), 6);
+      if (profile.enemyType === "swarm") return Math.min(10 + wave, 20);
+      return Math.min(6 + Math.floor(wave / 2), 12);
+    }
+
+    function enemyCountForWave(wave, profile = waveProfile(wave), difficulty = DEFAULT_DIFFICULTY) {
+      const settings = normalizeDifficulty(difficulty);
+      const cap = profile.enemyType === "tank" ? 18 : profile.enemyType === "swarm" ? 60 : 42;
+      return Math.max(1, Math.min(cap, Math.round(baseEnemyCountForWave(wave, profile) * settings.enemyDensity)));
+    }
+
+    function fireIntervalForDifficulty(difficulty = DEFAULT_DIFFICULTY) {
+      const settings = normalizeDifficulty(difficulty);
+      return Math.max(.18, .95 / settings.bulletDensity);
+    }
+
+    function bulletSpeedForDifficulty(difficulty = DEFAULT_DIFFICULTY, randomFn = Math.random, baseSpeed = 169) {
+      const settings = normalizeDifficulty(difficulty);
+      const fast = settings.fastBulletRatio > 0 && randomFn() < settings.fastBulletRatio;
+      return { speed: baseSpeed * (fast ? settings.fastBulletSpeed : 1), fast };
+    }
+
+    function createEnemy(game, type, index, count) {
+      const tank = type === "tank";
+      const swarm = type === "swarm";
+      const w = tank ? 48 : swarm ? 23 : 32;
+      const h = tank ? 34 : swarm ? 19 : 24;
+      return {
+        id: entityId(game, "enemy"),
+        type,
+        x: 75 + (index % Math.min(count, 8)) * 112 + randomRange(game, -20, 20),
+        y: -35 - Math.floor(index / 8) * 62,
+        w,
+        h,
+        hp: tank ? 4 : swarm ? 1 : 2,
+        maxHp: tank ? 4 : swarm ? 1 : 2,
+        vx: (swarm ? 76 : 35) * (index % 2 ? 1 : -1),
+        phase: randomRange(game, 0, Math.PI * 2),
+      };
+    }
+
+    function startWave(game) {
+      game.profile = waveProfile(game.wave);
+      const count = enemyCountForWave(game.wave, game.profile, game.difficulty);
+      game.enemies = Array.from({ length: count }, (_, index) => createEnemy(game, game.profile.enemyType, index, count));
+      game.playerBullets = [];
+      game.enemyBullets = [];
+      game.enemyFireClock_s = Math.min(.8, fireIntervalForDifficulty(game.difficulty));
+      game.waveClock_s = 0;
+      game.waveActive = true;
+      game.counters.wavesStarted += 1;
+      game.events.push({ type:"wave_started", tick:game.tick, wave:game.wave, enemyType:game.profile.enemyType, count });
+    }
+
+    function createGame(manifest = {}) {
+      const seed = normalizeSeed(manifest.seed);
+      const game = {
+        schema_version: 1,
+        engine_version: ENGINE_VERSION,
+        width: WIDTH,
+        height: HEIGHT,
+        tick: 0,
+        sim_ms: 0,
+        seed,
+        rng: { algorithm: PRNG_VERSION, state: seed },
+        difficulty: normalizeDifficulty(manifest.difficulty || (manifest.profile === "hardest" ? HARDEST_DIFFICULTY : DEFAULT_DIFFICULTY)),
+        wave: 1,
+        profile: waveProfile(1),
+        score: 0,
+        player: { x: PLAYER_START_X, y: PLAYER_START_Y, w: PLAYER_W, h: PLAYER_H, lives: 3, maxLives: 3, cooldown_s: 0, invincible_s: 0 },
+        playerBullets: [],
+        enemyBullets: [],
+        enemies: [],
+        events: [],
+        terminal: null,
+        waveActive: false,
+        waveClock_s: 0,
+        enemyFireClock_s: 0,
+        nextEntityId: 1,
+        counters: {
+          playerShots: 0,
+          enemyShots: 0,
+          fastEnemyShots: 0,
+          aimedEnemyShots: 0,
+          sprayEnemyShots: 0,
+          sweepEnemyShots: 0,
+          hitsTaken: 0,
+          invulnerabilityContacts: 0,
+          enemiesDestroyed: 0,
+          wavesStarted: 0,
+        },
+      };
+      startWave(game);
+      return game;
+    }
+
+    function enemyVelocity(game, enemy) {
+      return {
+        vx: enemy.vx + Math.sin(game.waveClock_s * 2 + enemy.phase) * (enemy.type === "swarm" ? 28 : 9),
+        vy: 18 + game.wave * 1.5,
+      };
+    }
+
+    function hostileThreats(game) {
+      const bullets = game.enemyBullets.map((b) => ({ id:b.id, kind:"bullet", x:b.x, y:b.y, vx:b.vx, vy:b.vy, w:HOSTILE_BOX.w, h:HOSTILE_BOX.h }));
+      const enemies = game.enemies.map((e) => {
+        const v = enemyVelocity(game, e);
+        return { id:e.id, kind:"enemy", x:e.x, y:e.y, vx:v.vx, vy:v.vy, w:e.w, h:e.h };
+      });
+      return bullets.concat(enemies);
+    }
+
+    function overlaps(a, b) {
+      const aw = a.w ?? (a.radius || 0) * 2;
+      const ah = a.h ?? (a.radius || 0) * 2;
+      const bw = b.w ?? (b.radius || 0) * 2;
+      const bh = b.h ?? (b.radius || 0) * 2;
+      return Math.abs(a.x - b.x) < aw / 2 + bw / 2 && Math.abs(a.y - b.y) < ah / 2 + bh / 2;
     }
 
     function axisInterval(position, velocity, extent, duration) {
-      if (Math.abs(velocity) < 1e-12) return Math.abs(position) <= extent ? [0,duration] : null;
+      if (Math.abs(velocity) < 1e-12) return Math.abs(position) <= extent ? [0, duration] : null;
       const a = (-extent - position) / velocity;
       const b = (extent - position) / velocity;
-      const enter = Math.max(0, Math.min(a,b));
-      const exit = Math.min(duration, Math.max(a,b));
-      return enter <= exit + 1e-12 ? [enter,exit] : null;
+      const enter = Math.max(0, Math.min(a, b));
+      const exit = Math.min(duration, Math.max(a, b));
+      return enter <= exit + 1e-12 ? [enter, exit] : null;
     }
 
     function relativeMotion(segment, threat) {
       const duration = Math.max(0, segment.t1 - segment.t0);
-      const playerVelocity = duration > 0 ? { x:(segment.p1.x-segment.p0.x)/duration, y:(segment.p1.y-segment.p0.y)/duration } : {x:0,y:0};
+      const playerVelocity = duration > 0 ? { x:(segment.p1.x - segment.p0.x) / duration, y:(segment.p1.y - segment.p0.y) / duration } : { x:0, y:0 };
       return {
         duration,
-        rx:threat.x + (threat.vx||0)*segment.t0 - segment.p0.x,
-        ry:threat.y + (threat.vy||0)*segment.t0 - segment.p0.y,
-        vx:(threat.vx||0)-playerVelocity.x,
-        vy:(threat.vy||0)-playerVelocity.y,
+        rx: threat.x + (threat.vx || 0) * segment.t0 - segment.p0.x,
+        ry: threat.y + (threat.vy || 0) * segment.t0 - segment.p0.y,
+        vx: (threat.vx || 0) - playerVelocity.x,
+        vy: (threat.vy || 0) - playerVelocity.y,
       };
     }
 
@@ -179,324 +393,1570 @@
     function segmentClearance(segment, threat, halfExtents) {
       const r = relativeMotion(segment, threat);
       const lines = [
-        [r.vx, r.rx-halfExtents.x], [-r.vx, -r.rx-halfExtents.x],
-        [r.vy, r.ry-halfExtents.y], [-r.vy, -r.ry-halfExtents.y], [0,0],
+        [r.vx, r.rx - halfExtents.x], [-r.vx, -r.rx - halfExtents.x],
+        [r.vy, r.ry - halfExtents.y], [-r.vy, -r.ry - halfExtents.y], [0, 0],
       ];
-      const times = [0,r.duration];
-      for (let i=0;i<lines.length;i+=1) for (let j=i+1;j<lines.length;j+=1) {
-        const denominator = lines[i][0]-lines[j][0];
-        if (Math.abs(denominator) < 1e-12) continue;
-        const t = (lines[j][1]-lines[i][1])/denominator;
-        if (t >= 0 && t <= r.duration) times.push(t);
+      const times = [0, r.duration];
+      for (let i = 0; i < lines.length; i += 1) {
+        for (let j = i + 1; j < lines.length; j += 1) {
+          const denominator = lines[i][0] - lines[j][0];
+          if (Math.abs(denominator) < 1e-12) continue;
+          const t = (lines[j][1] - lines[i][1]) / denominator;
+          if (t >= 0 && t <= r.duration) times.push(t);
+        }
       }
       let best = Number.POSITIVE_INFINITY;
-      for (const t of times) best = Math.min(best, Math.max(Math.abs(r.rx+r.vx*t)-halfExtents.x, Math.abs(r.ry+r.vy*t)-halfExtents.y, 0));
+      for (const t of times) best = Math.min(best, Math.max(Math.abs(r.rx + r.vx * t) - halfExtents.x, Math.abs(r.ry + r.vy * t) - halfExtents.y, 0));
       return best;
     }
 
-    function allThreats(snapshot) {
-      return [...(snapshot.bullets||[]), ...(snapshot.enemies||[])];
+    function edgeDistances(point, arena) {
+      return {
+        left: Math.max(0, point.x - arena.left),
+        right: Math.max(0, arena.right - point.x),
+        top: Math.max(0, point.y - arena.top),
+        bottom: Math.max(0, arena.bottom - point.y),
+      };
     }
 
-    function evaluateCandidates(snapshot, previousActionId = "hold", options = {}) {
-      const player = snapshot.player;
-      const arena = arenaFor(snapshot.width, snapshot.height, player.w, player.h);
-      const center = { x:snapshot.width/2, y:snapshot.height*.68 };
-      const threats = allThreats(snapshot);
-      const moveMs = options.moveMs === undefined ? ACTION_MS : options.moveMs;
-      const horizonMs = options.horizonMs === undefined ? LOOKAHEAD_MS : options.horizonMs;
-      return ACTION_IDS.map((id,index) => {
-        const plan = planAction(player,id,moveMs,horizonMs,arena);
-        let collisionTime = null;
-        let clearance = threats.length ? Number.POSITIVE_INFINITY : null;
+    function movePoint(point, movement, arena) {
+      const velocity = velocityFor(movement);
+      const x = clamp(point.x + velocity.x * DT_SECONDS, arena.left, arena.right);
+      const y = clamp(point.y + velocity.y * DT_SECONDS, arena.top, arena.bottom);
+      return { x, y, wall_clamped: x !== point.x + velocity.x * DT_SECONDS || y !== point.y + velocity.y * DT_SECONDS };
+    }
+
+    function appendHoldSegment(segments, cursor, startMs, durationMs) {
+      if (durationMs <= 1e-9) return;
+      segments.push({ t0:startMs / 1000, t1:(startMs + durationMs) / 1000, p0:{ ...cursor }, p1:{ ...cursor } });
+    }
+
+    function appendMotionSegments(segments, cursor, movement, startMs, durationMs, arena) {
+      if (durationMs <= 1e-9) return cursor;
+      const base = velocityFor(movement);
+      let vx = base.x;
+      let vy = base.y;
+      let nowMs = startMs;
+      let remainingMs = durationMs;
+      let point = { ...cursor };
+      const eps = 1e-9;
+      if ((vx < 0 && point.x <= arena.left + eps) || (vx > 0 && point.x >= arena.right - eps)) vx = 0;
+      if ((vy < 0 && point.y <= arena.top + eps) || (vy > 0 && point.y >= arena.bottom - eps)) vy = 0;
+      while (remainingMs > eps) {
+        if (Math.abs(vx) < eps && Math.abs(vy) < eps) {
+          appendHoldSegment(segments, point, nowMs, remainingMs);
+          nowMs += remainingMs;
+          remainingMs = 0;
+          break;
+        }
+        const maxSeconds = remainingMs / 1000;
+        let hitSeconds = maxSeconds;
+        let hitX = false;
+        let hitY = false;
+        if (vx < -eps) {
+          const t = (arena.left - point.x) / vx;
+          if (t >= -eps && t < hitSeconds + eps) { hitSeconds = Math.max(0, t); hitX = true; hitY = false; }
+        } else if (vx > eps) {
+          const t = (arena.right - point.x) / vx;
+          if (t >= -eps && t < hitSeconds + eps) { hitSeconds = Math.max(0, t); hitX = true; hitY = false; }
+        }
+        if (vy < -eps) {
+          const t = (arena.top - point.y) / vy;
+          if (t >= -eps && t < hitSeconds - eps) { hitSeconds = Math.max(0, t); hitX = false; hitY = true; }
+          else if (Math.abs(t - hitSeconds) <= eps) hitY = true;
+        } else if (vy > eps) {
+          const t = (arena.bottom - point.y) / vy;
+          if (t >= -eps && t < hitSeconds - eps) { hitSeconds = Math.max(0, t); hitX = false; hitY = true; }
+          else if (Math.abs(t - hitSeconds) <= eps) hitY = true;
+        }
+        const stepSeconds = Math.min(maxSeconds, Math.max(0, hitSeconds));
+        const next = {
+          x: clamp(point.x + vx * stepSeconds, arena.left, arena.right),
+          y: clamp(point.y + vy * stepSeconds, arena.top, arena.bottom),
+        };
+        if (stepSeconds > eps) {
+          segments.push({ t0:nowMs / 1000, t1:(nowMs + stepSeconds * 1000) / 1000, p0:{ ...point }, p1:{ ...next } });
+          nowMs += stepSeconds * 1000;
+          remainingMs -= stepSeconds * 1000;
+          point = next;
+        }
+        if (stepSeconds >= maxSeconds - eps) break;
+        if (hitX || (vx < 0 && point.x <= arena.left + eps) || (vx > 0 && point.x >= arena.right - eps)) vx = 0;
+        if (hitY || (vy < 0 && point.y <= arena.top + eps) || (vy > 0 && point.y >= arena.bottom - eps)) vy = 0;
+        if (stepSeconds <= eps && !hitX && !hitY) break;
+      }
+      return point;
+    }
+
+    function pointAtSegments(segments, timeMs) {
+      const timeS = timeMs / 1000;
+      for (const segment of segments) {
+        if (timeS >= segment.t0 - 1e-9 && timeS <= segment.t1 + 1e-9) {
+          const duration = segment.t1 - segment.t0;
+          if (duration <= 1e-12) return { ...segment.p1 };
+          const ratio = clamp((timeS - segment.t0) / duration, 0, 1);
+          return {
+            x: segment.p0.x + (segment.p1.x - segment.p0.x) * ratio,
+            y: segment.p0.y + (segment.p1.y - segment.p0.y) * ratio,
+          };
+        }
+      }
+      return segments.length ? { ...segments[segments.length - 1].p1 } : { x:0, y:0 };
+    }
+
+    function interpolateSegmentPoint(segment, timeS) {
+      const duration = segment.t1 - segment.t0;
+      if (duration <= 1e-12) return { ...segment.p1 };
+      const ratio = clamp((timeS - segment.t0) / duration, 0, 1);
+      return {
+        x: segment.p0.x + (segment.p1.x - segment.p0.x) * ratio,
+        y: segment.p0.y + (segment.p1.y - segment.p0.y) * ratio,
+      };
+    }
+
+    function clipSegmentByTime(segment, startMs, endMs) {
+      const startS = startMs / 1000;
+      const endS = endMs / 1000;
+      const t0 = Math.max(segment.t0, startS);
+      const t1 = Math.min(segment.t1, endS);
+      if (t1 <= t0 + 1e-12) return null;
+      return {
+        t0,
+        t1,
+        p0: interpolateSegmentPoint(segment, t0),
+        p1: interpolateSegmentPoint(segment, t1),
+      };
+    }
+
+    function segmentsInWindow(segments, startMs, endMs) {
+      if (endMs <= startMs + 1e-9) return [];
+      return segments.map((segment) => clipSegmentByTime(segment, startMs, endMs)).filter(Boolean);
+    }
+
+    function buildForecastSegments(game, movement, lease, expectedDelayMs, activeCommand, horizonMs) {
+      const arena = arenaFor(game);
+      const segments = [];
+      let cursor = { x:game.player.x, y:game.player.y };
+      let timeMs = 0;
+      const activeRemainingMs = activeCommand ? Math.max(0, activeCommand.remaining_ms || 0) : 0;
+      const activePrefixMs = activeCommand ? Math.min(expectedDelayMs, activeRemainingMs) : 0;
+      if (activeCommand && activePrefixMs > 0) {
+        cursor = appendMotionSegments(segments, cursor, activeCommand.movement, timeMs, activePrefixMs, arena);
+        timeMs += activePrefixMs;
+      }
+      if (timeMs < expectedDelayMs) {
+        appendHoldSegment(segments, cursor, timeMs, expectedDelayMs - timeMs);
+        timeMs = expectedDelayMs;
+      }
+      const leaseMs = lease ? LEASE_MS[lease] : 0;
+      if (lease && leaseMs > 0) {
+        cursor = appendMotionSegments(segments, cursor, movement, timeMs, leaseMs, arena);
+        timeMs += leaseMs;
+      }
+      if (timeMs < horizonMs) appendHoldSegment(segments, cursor, timeMs, horizonMs - timeMs);
+      return segments;
+    }
+
+    function cooldownAfterPrefix(game, expectedDelayMs, activeCommand) {
+      let cooldownMs = Math.max(0, game.player.cooldown_s * 1000);
+      const activeFireUntil = activeCommand && activeCommand.fire === "shoot" ? Math.min(expectedDelayMs, Math.max(0, activeCommand.remaining_ms || 0)) : 0;
+      let elapsed = 0;
+      while (elapsed < expectedDelayMs - 1e-9) {
+        const step = Math.min(DT_MS, expectedDelayMs - elapsed);
+        cooldownMs = Math.max(0, cooldownMs - step);
+        elapsed += step;
+        if (elapsed <= activeFireUntil + 1e-9 && cooldownMs <= 0) cooldownMs = PLAYER_COOLDOWN_S * 1000;
+      }
+      return cooldownMs;
+    }
+
+    function shotInterceptFrom(game, shotStart, shotStartMs, horizonMs) {
+      let best = null;
+      const remainingSeconds = Math.max(0, horizonMs - shotStartMs) / 1000;
+      if (remainingSeconds <= 0) return null;
+      for (const enemy of game.enemies) {
+        const v = enemyVelocity(game, enemy);
+        const threat = {
+          x: enemy.x + v.vx * shotStartMs / 1000,
+          y: enemy.y + v.vy * shotStartMs / 1000,
+          vx: v.vx,
+          vy: v.vy,
+          w: enemy.w,
+          h: enemy.h,
+        };
+        const segment = {
+          t0: 0,
+          t1: remainingSeconds,
+          p0: { x:shotStart.x, y:shotStart.y },
+          p1: { x:shotStart.x, y:shotStart.y + PLAYER_SHOT_SPEED * remainingSeconds },
+        };
+        const contact = sweptContact(segment, threat, { x:PLAYER_SHOT_BOX.w / 2 + threat.w / 2, y:PLAYER_SHOT_BOX.h / 2 + threat.h / 2 });
+        if (contact !== null) {
+          const eta = shotStartMs + contact * 1000;
+          if (best === null || eta < best) best = eta;
+        }
+      }
+      return best;
+    }
+
+    function forecastPath(game, movement, lease, expectedDelayMs, activeCommand) {
+      const arena = arenaFor(game);
+      const threats = hostileThreats(game);
+      const currentEnemies = threats.filter((threat) => threat.kind === "enemy");
+      const horizonMs = Math.max(FORECAST_MIN_HORIZON_MS, expectedDelayMs + LEASE_MS.medium);
+      const leaseEndMs = expectedDelayMs + LEASE_MS[lease];
+      const segments = buildForecastSegments(game, movement, lease, expectedDelayMs, activeCommand, horizonMs);
+      const endpoint = pointAtSegments(segments, leaseEndMs);
+      const wallClamped = segments.some((segment) => {
+        const edges = edgeDistances(segment.p1, arena);
+        return edges.left === 0 || edges.right === 0 || edges.top === 0 || edges.bottom === 0;
+      });
+      const vulnerableStartMs = Math.max(expectedDelayMs, Math.max(0, game.player.invincible_s || 0) * 1000);
+      const contactSegments = segmentsInWindow(segments, vulnerableStartMs, horizonMs);
+      const enemyClearanceSegments = segmentsInWindow(segments, expectedDelayMs, horizonMs);
+      let firstContact = null;
+      let minClearance = contactSegments.length && threats.length ? Number.POSITIVE_INFINITY : null;
+      let minEnemyClearance = enemyClearanceSegments.length && currentEnemies.length ? Number.POSITIVE_INFINITY : null;
+      let shotEtaMs = null;
+      for (const segment of contactSegments) {
         for (const threat of threats) {
-          const halfExtents = { x:player.w/2+(threat.w||8)/2+SAFETY_MARGIN_PX, y:player.h/2+(threat.h||8)/2+SAFETY_MARGIN_PX };
-          for (const segment of plan.segments) {
-            const contact = sweptContact(segment,threat,halfExtents);
-            if (contact !== null && (collisionTime === null || contact < collisionTime)) collisionTime = contact;
-            clearance = Math.min(clearance,segmentClearance(segment,threat,halfExtents));
+          const halfExtents = { x:PLAYER_W / 2 + threat.w / 2 + SAFETY_MARGIN_PX, y:PLAYER_H / 2 + threat.h / 2 + SAFETY_MARGIN_PX };
+          const contact = sweptContact(segment, threat, halfExtents);
+          if (contact !== null && (firstContact === null || contact * 1000 < firstContact)) firstContact = contact * 1000;
+          const clearance = segmentClearance(segment, threat, halfExtents);
+          minClearance = minClearance === null ? clearance : Math.min(minClearance, clearance);
+        }
+      }
+      for (const segment of enemyClearanceSegments) {
+        for (const enemy of currentEnemies) {
+          const enemyHalfExtents = { x:PLAYER_W / 2 + enemy.w / 2, y:PLAYER_H / 2 + enemy.h / 2 };
+          const clearance = segmentClearance(segment, enemy, enemyHalfExtents);
+          minEnemyClearance = minEnemyClearance === null ? clearance : Math.min(minEnemyClearance, clearance);
+        }
+      }
+      let cooldownMs = cooldownAfterPrefix(game, expectedDelayMs, activeCommand);
+      for (let shotTickMs = expectedDelayMs; shotTickMs < leaseEndMs - 1e-9; shotTickMs += DT_MS) {
+        const nextTickMs = Math.min(leaseEndMs, shotTickMs + DT_MS);
+        cooldownMs = Math.max(0, cooldownMs - (nextTickMs - shotTickMs));
+        if (cooldownMs <= 0) {
+          const shotPoint = pointAtSegments(segments, nextTickMs);
+          const eta = shotInterceptFrom(game, { x:shotPoint.x, y:shotPoint.y + PLAYER_MUZZLE_Y }, nextTickMs, horizonMs);
+          if (eta !== null && (shotEtaMs === null || eta < shotEtaMs)) shotEtaMs = eta;
+          cooldownMs = PLAYER_COOLDOWN_S * 1000;
+        }
+      }
+      const edges = edgeDistances(endpoint, arena);
+      return { endpoint, edge_distances_px: edges, room_px: Math.min(edges.left, edges.right, edges.top, edges.bottom), contact_ms:firstContact, clearance_px:minClearance, enemy_clearance_px:minEnemyClearance, shot_eta_ms:shotEtaMs, wall_clamped:wallClamped };
+    }
+
+    function forecastPrefix(game, expectedDelayMs, activeCommand) {
+      const threats = hostileThreats(game);
+      const segments = buildForecastSegments(game, "hold", null, expectedDelayMs, activeCommand, expectedDelayMs);
+      let firstContact = null;
+      for (const segment of segments) {
+        for (const threat of threats) {
+          const halfExtents = { x:PLAYER_W / 2 + threat.w / 2 + SAFETY_MARGIN_PX, y:PLAYER_H / 2 + threat.h / 2 + SAFETY_MARGIN_PX };
+          const contact = sweptContact(segment, threat, halfExtents);
+          if (contact !== null && (firstContact === null || contact * 1000 < firstContact)) firstContact = contact * 1000;
+        }
+      }
+      return { contact_ms:firstContact };
+    }
+
+    function observeGame(game, context = {}) {
+      const expectedDelayMs = Number.isFinite(context.expected_delay_ms) ? Math.max(0, context.expected_delay_ms) : 260;
+      const activeCommand = context.active_command || null;
+      const threats = hostileThreats(game);
+      const nearest = threats
+        .map((threat) => ({ threat, distance:Math.hypot(threat.x - game.player.x, threat.y - game.player.y) }))
+        .sort((a, b) => a.distance - b.distance || String(a.threat.id).localeCompare(String(b.threat.id)))
+        .slice(0, 8)
+        .map(({ threat }) => ({
+          kind: threat.kind,
+          x: rounded(threat.x),
+          y: rounded(threat.y),
+          vx: rounded(threat.vx),
+          vy: rounded(threat.vy),
+          w: rounded(threat.w),
+          h: rounded(threat.h),
+        }));
+      const horizonMs = Math.max(FORECAST_MIN_HORIZON_MS, expectedDelayMs + LEASE_MS.medium);
+      const prefix = forecastPrefix(game, expectedDelayMs, activeCommand);
+      const candidates = ACTION_IDS.map((id) => {
+        const short = forecastPath(game, id, "short", expectedDelayMs, activeCommand);
+        const medium = forecastPath(game, id, "medium", expectedDelayMs, activeCommand);
+        const project = (forecast) => ({
+          endpoint: { x:rounded(forecast.endpoint.x), y:rounded(forecast.endpoint.y) },
+          contact_ms: forecast.contact_ms === null ? null : rounded(forecast.contact_ms),
+          clearance_px: forecast.clearance_px === null || !Number.isFinite(forecast.clearance_px) ? null : rounded(forecast.clearance_px),
+          enemy_clearance_px: forecast.enemy_clearance_px === null || !Number.isFinite(forecast.enemy_clearance_px) ? null : rounded(forecast.enemy_clearance_px),
+          edge_distances_px: {
+            left: rounded(forecast.edge_distances_px.left),
+            right: rounded(forecast.edge_distances_px.right),
+            top: rounded(forecast.edge_distances_px.top),
+            bottom: rounded(forecast.edge_distances_px.bottom),
+          },
+          room_px: rounded(forecast.room_px),
+          shot_eta_ms: forecast.shot_eta_ms === null ? null : rounded(forecast.shot_eta_ms),
+          wall_clamped: forecast.wall_clamped,
+        });
+        return { id, short:project(short), medium:project(medium) };
+      });
+      const state = {
+        tick: game.tick,
+        sim_ms: rounded(game.sim_ms),
+        wave: game.wave,
+        last_intent: context.last_intent ?? null,
+        difficulty: { ...game.difficulty },
+        player: {
+          x: rounded(game.player.x),
+          y: rounded(game.player.y),
+          w: game.player.w,
+          h: game.player.h,
+          lives: game.player.lives,
+          cooldown_ms: rounded(Math.max(0, game.player.cooldown_s) * 1000),
+          invulnerability_ms: rounded(Math.max(0, game.player.invincible_s) * 1000),
+        },
+        active_command: activeCommand ? {
+          movement: activeCommand.movement,
+          fire: activeCommand.fire,
+          lease: activeCommand.lease,
+          ...(activeCommand.intent === undefined ? {} : { intent:activeCommand.intent }),
+          remaining_ms: rounded(Math.max(0, activeCommand.remaining_ms || 0)),
+        } : null,
+        enemy_fire_in_ms: rounded(Math.max(0, game.enemyFireClock_s) * 1000),
+        threat_counts: { bullets:game.enemyBullets.length, enemies:game.enemies.length, shown:nearest.length },
+        nearest_threats: nearest,
+        recent_commands: (context.recent_commands || []).slice(-6).map((span) => ({
+          movement: span.movement,
+          fire: span.fire,
+          lease: span.lease ?? null,
+          ...(span.intent === undefined ? {} : { intent:span.intent }),
+          elapsed_ms: rounded(span.elapsed_ms || 0),
+          dx: rounded(span.dx || 0),
+          dy: rounded(span.dy || 0),
+          source: span.source,
+        })),
+        recent_hits: (context.recent_hits || [])
+          .filter((hit) => game.sim_ms - hit.sim_ms <= 5000)
+          .slice(-4)
+          .map((hit) => ({
+            ago_ms: rounded(game.sim_ms - hit.sim_ms),
+            kind: hit.kind,
+            x: rounded(hit.x),
+            y: rounded(hit.y),
+            vx: rounded(hit.vx),
+            vy: rounded(hit.vy),
+            lives_after: hit.lives_after,
+          })),
+      };
+      const forecast = {
+        expected_delay_ms: rounded(expectedDelayMs),
+        latency_samples: Math.max(0, context.latency_samples || 0),
+        latency_spread_ms: rounded(context.latency_spread_ms || 0),
+        horizon_ms: rounded(horizonMs),
+        prefix: {
+          authorized_remaining_ms: activeCommand ? rounded(activeCommand.remaining_ms || 0) : 0,
+          contact_ms: prefix.contact_ms === null ? null : rounded(prefix.contact_ms),
+        },
+        assumptions: { enemy_motion:"current_linear", future_spawns_included:false, contact_window:"after_arrival_while_vulnerable", enemy_clearance_window:"after_arrival" },
+        candidates,
+      };
+      return { state, forecast };
+    }
+
+    function emitPlayerShot(game, command, events) {
+      const shot = {
+        id: entityId(game, "pshot"),
+        x: game.player.x,
+        y: game.player.y + PLAYER_MUZZLE_Y,
+        vy: PLAYER_SHOT_SPEED,
+        radius: PLAYER_SHOT_RADIUS,
+        authorizedBy: command ? { decision_id:command.decision_id, sequence:command.sequence, movement:command.movement, fire:command.fire, lease:command.lease, ...(command.intent === undefined ? {} : { intent:command.intent }) } : null,
+      };
+      game.playerBullets.push(shot);
+      game.player.cooldown_s = PLAYER_COOLDOWN_S;
+      game.counters.playerShots += 1;
+      events.push({ type:"shot", tick:game.tick, entity_id:shot.id, decision_id:shot.authorizedBy && shot.authorizedBy.decision_id, sequence:shot.authorizedBy && shot.authorizedBy.sequence, x:shot.x, y:shot.y });
+    }
+
+    function enemyShoot(game, events) {
+      if (!game.enemies.length) return;
+      const enemy = game.enemies[Math.floor(random01(game) * game.enemies.length)];
+      const dx = game.player.x - enemy.x;
+      const dy = game.player.y - enemy.y;
+      const angle = Math.atan2(dy, dx);
+      const speed = 169;
+      const add = (a, base = speed, origin = { x:enemy.x, y:enemy.y + enemy.h / 2 }, extra = {}) => {
+        const tuned = bulletSpeedForDifficulty(game.difficulty, () => random01(game), base);
+        const projectile = {
+          ...extra,
+          id: entityId(game, "ebullet"),
+          x: origin.x,
+          y: origin.y,
+          vx: Math.cos(a) * tuned.speed,
+          vy: Math.sin(a) * tuned.speed,
+          radius: extra.radius ?? (tuned.fast ? 5 : 4),
+          fast: tuned.fast,
+          from_enemy_id: enemy.id,
+        };
+        game.enemyBullets.push(projectile);
+        game.counters.enemyShots += 1;
+        if (tuned.fast) game.counters.fastEnemyShots += 1;
+        events.push({ type:"enemy_shot", tick:game.tick, entity_id:projectile.id, enemy_id:enemy.id, pattern:game.profile.bulletPattern, fast:tuned.fast, x:projectile.x, y:projectile.y, vx:projectile.vx, vy:projectile.vy });
+      };
+      if (game.profile.bulletPattern === "spray") {
+        [-.18, 0, .18].forEach((offset) => add(angle + offset, speed * .88));
+        game.counters.sprayEnemyShots += 3;
+      } else if (game.profile.bulletPattern === "sweep") {
+        add(Math.PI / 2, speed * .92, { x:randomRange(game, 38, WIDTH - 38), y:-8 }, { sweep:true, radius:5 });
+        game.counters.sweepEnemyShots += 1;
+      } else {
+        add(angle);
+        game.counters.aimedEnemyShots += 1;
+      }
+    }
+
+    function hitPlayer(game, source, command, events) {
+      const before = game.player.lives;
+      if (game.player.invincible_s > 0) {
+        game.counters.invulnerabilityContacts += 1;
+        events.push({ type:"invulnerability_contact", tick:game.tick, lives:before, source, active_decision_id:command && command.decision_id });
+        return;
+      }
+      game.player.lives -= 1;
+      game.player.invincible_s = HIT_INVINCIBILITY_S;
+      game.counters.hitsTaken += 1;
+      const event = { type:"hit", tick:game.tick, before_lives:before, after_lives:game.player.lives, source, player:{ x:game.player.x, y:game.player.y, lives:game.player.lives }, active_decision_id:command && command.decision_id, sequence:command && command.sequence };
+      events.push(event);
+      if (game.player.lives <= 0) {
+        game.terminal = { reason:"death", tick:game.tick, sim_ms:game.sim_ms, lives:game.player.lives, wave:game.wave, score:game.score };
+        game.waveActive = false;
+        events.push({ type:"terminal", tick:game.tick, reason:"death", lives:game.player.lives, wave:game.wave, score:game.score });
+      }
+    }
+
+    function stepGame(game, commandOrNull) {
+      const events = [];
+      if (game.terminal) return { events };
+      const command = commandOrNull || null;
+      const movement = command ? command.movement : "hold";
+      const fire = command ? command.fire : "cease";
+      const arena = arenaFor(game);
+      const beforePlayer = { x:game.player.x, y:game.player.y };
+      const moved = movePoint(beforePlayer, movement, arena);
+      game.player.x = moved.x;
+      game.player.y = moved.y;
+      const displacement = { dx:game.player.x - beforePlayer.x, dy:game.player.y - beforePlayer.y, clamped:moved.wall_clamped };
+      if (command && (displacement.dx !== 0 || displacement.dy !== 0 || moved.wall_clamped)) {
+        events.push({ type:"movement", tick:game.tick, decision_id:command.decision_id, sequence:command.sequence, movement, dx:displacement.dx, dy:displacement.dy, clamped:moved.wall_clamped });
+      }
+      game.player.cooldown_s -= DT_SECONDS;
+      if (fire === "shoot" && game.player.cooldown_s <= 0 && command) emitPlayerShot(game, command, events);
+      if (game.player.invincible_s > 0) game.player.invincible_s = Math.max(0, game.player.invincible_s - DT_SECONDS);
+
+      game.playerBullets = game.playerBullets.filter((shot) => {
+        shot.y += shot.vy * DT_SECONDS;
+        return shot.y > -15;
+      });
+
+      game.enemyBullets = game.enemyBullets.filter((enemyShot) => {
+        enemyShot.x += enemyShot.vx * DT_SECONDS;
+        enemyShot.y += enemyShot.vy * DT_SECONDS;
+        if (overlaps({ x:enemyShot.x, y:enemyShot.y, w:HOSTILE_BOX.w, h:HOSTILE_BOX.h }, game.player)) {
+          hitPlayer(game, { kind:"bullet", id:enemyShot.id, x:enemyShot.x, y:enemyShot.y, vx:enemyShot.vx, vy:enemyShot.vy, w:HOSTILE_BOX.w, h:HOSTILE_BOX.h }, command, events);
+          return false;
+        }
+        return enemyShot.y < HEIGHT + 20 && enemyShot.x > -20 && enemyShot.x < WIDTH + 20;
+      });
+
+      game.enemies.forEach((enemy) => {
+        const v = enemyVelocity(game, enemy);
+        enemy.y += v.vy * DT_SECONDS;
+        enemy.x += v.vx * DT_SECONDS;
+        if (enemy.x < enemy.w / 2 || enemy.x > WIDTH - enemy.w / 2) enemy.vx *= -1;
+        if (overlaps(enemy, game.player)) hitPlayer(game, { kind:"enemy", id:enemy.id, x:enemy.x, y:enemy.y, vx:v.vx, vy:v.vy, w:enemy.w, h:enemy.h }, command, events);
+        if (enemy.y > HEIGHT + 25) enemy.y = -20;
+      });
+
+      for (let i = game.playerBullets.length - 1; i >= 0; i -= 1) {
+        for (let j = game.enemies.length - 1; j >= 0; j -= 1) {
+          const shot = game.playerBullets[i];
+          const enemy = game.enemies[j];
+          if (shot && overlaps({ x:shot.x, y:shot.y, w:PLAYER_SHOT_BOX.w, h:PLAYER_SHOT_BOX.h }, enemy)) {
+            game.playerBullets.splice(i, 1);
+            enemy.hp -= 1;
+            events.push({ type:"enemy_damaged", tick:game.tick, enemy_id:enemy.id, shot_id:shot.id, hp:enemy.hp, decision_id:shot.authorizedBy && shot.authorizedBy.decision_id });
+            if (enemy.hp <= 0) {
+              game.score += enemy.type === "tank" ? 80 : enemy.type === "swarm" ? 12 : 28;
+              game.counters.enemiesDestroyed += 1;
+              events.push({ type:"enemy_destroyed", tick:game.tick, enemy_id:enemy.id, enemy_type:enemy.type, score:game.score });
+              game.enemies.splice(j, 1);
+            }
+            break;
           }
         }
-        const room = Math.max(0,Math.min(plan.endpoint.x-arena.left,arena.right-plan.endpoint.x,plan.endpoint.y-arena.top,arena.bottom-plan.endpoint.y));
-        const centerCost = Math.max(0,(Math.hypot(plan.endpoint.x-center.x,plan.endpoint.y-center.y)-54)/200);
-        const roomCost = 1-clamp(room/100,0,1);
-        const switchCost = id===previousActionId?0:1;
-        return { id,index,inBounds:plan.inBounds,collisionTime,clearance,endpoint:plan.endpoint,centerCost,room,roomCost,switchCost,softCost:centerCost+.5*roomCost+.08*switchCost,safe:plan.inBounds&&collisionTime===null };
+      }
+
+      game.enemyFireClock_s -= DT_SECONDS;
+      if (game.enemyFireClock_s <= 0 && game.enemies.length) {
+        enemyShoot(game, events);
+        game.enemyFireClock_s = fireIntervalForDifficulty(game.difficulty);
+      }
+      game.waveClock_s += DT_SECONDS;
+      if (!game.enemies.length && game.waveActive && !game.terminal) {
+        game.waveActive = false;
+        game.wave += 1;
+        startWave(game);
+      }
+      game.tick += 1;
+      game.sim_ms = game.tick * DT_MS;
+      game.events = events;
+      return { events };
+    }
+
+    function serializeGame(game) {
+      return clone({
+        schema_version: game.schema_version,
+        engine_version: game.engine_version,
+        width: game.width,
+        height: game.height,
+        tick: game.tick,
+        sim_ms: game.sim_ms,
+        seed: game.seed,
+        rng: game.rng,
+        difficulty: game.difficulty,
+        wave: game.wave,
+        profile: game.profile,
+        score: game.score,
+        player: game.player,
+        playerBullets: game.playerBullets,
+        enemyBullets: game.enemyBullets,
+        enemies: game.enemies,
+        terminal: game.terminal,
+        waveActive: game.waveActive,
+        waveClock_s: game.waveClock_s,
+        enemyFireClock_s: game.enemyFireClock_s,
+        nextEntityId: game.nextEntityId,
+        counters: game.counters,
       });
     }
 
-    function chooseFallback(candidates) {
-      const safe = candidates.filter((candidate) => candidate.safe).sort((a,b)=>a.softCost-b.softCost||a.index-b.index);
-      if (safe.length) return {...safe[0],no_safe_candidate:false};
-      const inBounds = candidates.filter((candidate)=>candidate.inBounds).sort((a,b)=>{
-        const aTime = a.collisionTime===null ? Number.POSITIVE_INFINITY : a.collisionTime;
-        const bTime = b.collisionTime===null ? Number.POSITIVE_INFINITY : b.collisionTime;
-        return bTime-aTime || (b.clearance??-1)-(a.clearance??-1) || a.softCost-b.softCost || a.index-b.index;
-      });
-      return {...(inBounds[0]||candidates[0]),no_safe_candidate:true};
+    function restoreGame(checkpoint) {
+      const game = clone(checkpoint);
+      game.events = [];
+      return game;
     }
 
-    const shouldRequestModel = (candidates) => candidates.filter((candidate)=>candidate.safe).length >= 2;
-
-    function createLifecycle(epoch = 0) {
-      return { epoch, nextSequence:1, pending:null, lastAcceptedSequence:0, queued:null, active:null, lastExecutedId:"hold", acceptedCount:0, executedCount:0, jevExecutedCount:0 };
+    function stableStringify(value) {
+      if (value === null || typeof value !== "object") return JSON.stringify(value);
+      if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+      return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
     }
 
-    function makeRequestRecord(lifecycle,candidates,sentAtMs,abortController) {
-      const record = { epoch:lifecycle.epoch, sequence:lifecycle.nextSequence, sentAtMs, offeredIds:Object.freeze(candidates.filter((c)=>c.safe).map((c)=>c.id)), abortController };
-      return { record, lifecycle:{...lifecycle,nextSequence:lifecycle.nextSequence+1,pending:record} };
-    }
-
-    function validateReply(reply,request,lifecycle,nowMs,status) {
-      if (!request || lifecycle.pending!==request) return {ok:false,reason:"superseded_request"};
-      if (!status.running) return {ok:false,reason:"paused_or_stopped"};
-      if (!status.autopilot) return {ok:false,reason:"manual"};
-      if (!reply || reply.epoch!==request.epoch || request.epoch!==lifecycle.epoch) return {ok:false,reason:"stale_epoch"};
-      if (reply.sequence!==request.sequence || reply.sequence<=lifecycle.lastAcceptedSequence) return {ok:false,reason:"stale_sequence"};
-      const age = nowMs-request.sentAtMs;
-      if (age<0 || age>MAX_RESPONSE_AGE_MS) return {ok:false,reason:"age"};
-      if (!reply.api_ok) return {ok:false,reason:"api_failure"};
-      if (!reply.valid_choice) return {ok:false,reason:"invalid_answer"};
-      if (!request.offeredIds.includes(reply.movement)) return {ok:false,reason:"unoffered_choice"};
-      return {ok:true,reason:null,ageMs:age};
-    }
-
-    function acceptReply(reply,request,lifecycle,nowMs,status) {
-      const validation = validateReply(reply,request,lifecycle,nowMs,status);
-      if (!validation.ok) return {lifecycle,event:{type:"rejected",reason:validation.reason,selected:reply&&reply.movement||null}};
-      const queued = { id:reply.movement,epoch:reply.epoch,sequence:reply.sequence,sentAtMs:request.sentAtMs,receivedAtMs:nowMs,responseAgeMs:validation.ageMs };
-      return { lifecycle:{...lifecycle,pending:null,lastAcceptedSequence:reply.sequence,queued,acceptedCount:lifecycle.acceptedCount+1}, event:{type:"selected",id:reply.movement,epoch:reply.epoch,sequence:reply.sequence,ageMs:validation.ageMs} };
-    }
-
-    function clearPendingIfCurrent(lifecycle,request) { return lifecycle.pending===request ? {...lifecycle,pending:null} : lifecycle; }
-
-    function invalidateLifecycle(lifecycle,reason) {
-      return {...lifecycle,epoch:lifecycle.epoch+1,pending:null,queued:null,active:null,lastInvalidation:reason};
-    }
-
-    function startExecution(candidate,source,nowMs,queued = null) {
-      return { id:candidate.id,source,startedAtMs:nowMs,expiresAtMs:nowMs+ACTION_MS,counted:false,sequence:queued&&queued.sequence||null };
-    }
-
-    function resolveAction(snapshot,lifecycle,nowMs,wallNowMs) {
-      let next = lifecycle;
-      let event = null;
-      const previous = lifecycle.active?.id || lifecycle.lastExecutedId || "hold";
-      const candidates = evaluateCandidates(snapshot,previous);
-      if (next.queued) {
-        const queued = next.queued;
-        const currentWallMs = Number.isFinite(wallNowMs) ? wallNowMs : queued.receivedAtMs;
-        const queuedAgeMs = currentWallMs-queued.sentAtMs;
-        if (queuedAgeMs<0 || queuedAgeMs>MAX_RESPONSE_AGE_MS) {
-          const fallback = chooseFallback(candidates);
-          const active = startExecution(fallback,"local",nowMs);
-          next = {...next,queued:null,active};
-          event = {type:"override",reason:"age",selected:queued.id,replacement:fallback.id};
-          return {lifecycle:next,execution:active,event,candidates};
-        }
-        const selected = candidates.find((candidate)=>candidate.id===queued.id);
-        if (selected && selected.safe) {
-          const active = startExecution(selected,"jev",nowMs,queued);
-          next = {...next,queued:null,active};
-          return {lifecycle:next,execution:active,event:null,candidates};
-        }
-        const fallback = chooseFallback(candidates);
-        const reason = selected && !selected.inBounds ? "arena_bound" : "unsafe_on_arrival";
-        const active = startExecution(fallback,"local",nowMs);
-        next = {...next,queued:null,active};
-        event = {type:"override",reason,selected:queued.id,replacement:fallback.id};
-        return {lifecycle:next,execution:active,event,candidates};
+    function hashText(text) {
+      let hash = 2166136261;
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619) >>> 0;
       }
-      if (next.active && nowMs < next.active.expiresAtMs) {
-        const remainingMs = next.active.expiresAtMs-nowMs;
-        const current = evaluateCandidates(snapshot,next.active.id,{moveMs:remainingMs,horizonMs:LOOKAHEAD_MS}).find((candidate)=>candidate.id===next.active.id);
-        if (current && current.safe) return {lifecycle:next,execution:next.active,event:null,candidates};
-        const fallback = chooseFallback(candidates);
-        const reason = current && !current.inBounds ? "arena_bound" : "new_collision";
-        const active = startExecution(fallback,"local",nowMs);
-        next = {...next,active};
-        event = {type:"override",reason,selected:lifecycle.active.id,replacement:fallback.id};
-        return {lifecycle:next,execution:active,event,candidates};
+      return hash.toString(16).padStart(8, "0");
+    }
+
+    function hashGame(game) {
+      return `fnv1a32:${hashText(stableStringify(serializeGame(game)))}`;
+    }
+
+    function gameStatus(game) {
+      return {
+        tick: game.tick,
+        sim_ms: game.sim_ms,
+        lives: game.player.lives,
+        wave: game.wave,
+        score: game.score,
+        game_over: Boolean(game.terminal),
+        counters: clone(game.counters),
+      };
+    }
+
+    function rulesManifest() {
+      return clone(RULES);
+    }
+
+    globalThis.SpaceDecisionCore = Object.freeze({
+      ENGINE_VERSION, DT_MS, ACTION_IDS, FIRE_IDS, LEASE_TICKS, LEASE_MS, RULES, DEFAULT_DIFFICULTY, HARDEST_DIFFICULTY,
+      createGame, stepGame, observeGame, serializeGame, restoreGame, hashGame, gameStatus,
+      normalizeDifficulty, arenaFor, velocityFor, waveProfile, baseEnemyCountForWave, enemyCountForWave,
+      fireIntervalForDifficulty, bulletSpeedForDifficulty, rulesManifest,
+      _private: Object.freeze({ sweptContact, segmentClearance, hostileThreats, stableStringify }),
+    });
+  })();
+  </script>
+
+  <script id="space-djev-controller">
+  (() => {
+    "use strict";
+
+    const CONTROLLER_VERSION = "space-djev-controller-v2";
+    const SCHEMA_VERSION = 1;
+    const PROMPT_VERSION = "djev-authoritative-v2";
+    const CONTEXT_VERSION = "djev-observation-v2";
+    const MAX_RESPONSE_AGE_MS = 600;
+    const ACTION_IDS = globalThis.SpaceDecisionCore.ACTION_IDS;
+    const FIRE_IDS = globalThis.SpaceDecisionCore.FIRE_IDS;
+    const LEASE_TICKS = globalThis.SpaceDecisionCore.LEASE_TICKS;
+    const DT_MS = globalThis.SpaceDecisionCore.DT_MS;
+    const INTENT_IDS = Object.freeze(["evade", "recover", "position"]);
+
+    const MOVEMENT_DESCRIPTIONS = Object.freeze({
+      hold:"Hold position at 112 px/s equivalent zero velocity",
+      left:"Move left at normalized 112 px/s",
+      right:"Move right at normalized 112 px/s",
+      up:"Move up at normalized 112 px/s",
+      down:"Move down at normalized 112 px/s",
+      up_left:"Move diagonally up-left at normalized 112 px/s",
+      up_right:"Move diagonally up-right at normalized 112 px/s",
+      down_left:"Move diagonally down-left at normalized 112 px/s",
+      down_right:"Move diagonally down-right at normalized 112 px/s",
+    });
+    const FIRE_DESCRIPTIONS = Object.freeze({ shoot:"Enable the normal weapon during this lease", cease:"Do not emit new player shots during this lease" });
+    const PATH_DESCRIPTIONS = Object.freeze(Object.fromEntries(ACTION_IDS.map((id) => [`${id}__medium`, `${MOVEMENT_DESCRIPTIONS[id]}; authorize at most 30 ticks / 500 ms`])));
+    const INTENT_DESCRIPTIONS = Object.freeze({ evade:"Evade current danger", recover:"Recover maneuvering room", position:"Position for subsequent movement and fire" });
+
+    const rounded = (value, digits = 1) => Number(Number(value).toFixed(digits));
+    const median = (values) => {
+      if (!values.length) return 260;
+      const sorted = values.slice().sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    };
+
+    function createController({ run_id = null, epoch = 1 } = {}) {
+      return {
+        schema_version: SCHEMA_VERSION,
+        controller_version: CONTROLLER_VERSION,
+        run_id,
+        epoch,
+        nextSequence: 1,
+        pending: null,
+        queued: null,
+        active: null,
+        neutral: true,
+        lastNeutralReason: "startup",
+        lastAppliedIntent: null,
+        lastAcceptedSequence: 0,
+        completedLatencies: [],
+        backoffMs: 0,
+        counters: { completed:0, failures:0, accepted:0, applied:0, rejected:0, neutralTicks:0 },
+      };
+    }
+
+    function latencyStats(controller) {
+      const samples = controller.completedLatencies.slice(-8);
+      if (!samples.length) return { expected_delay_ms:260, latency_samples:0, latency_spread_ms:0 };
+      return {
+        expected_delay_ms: rounded(median(samples)),
+        latency_samples: samples.length,
+        latency_spread_ms: rounded(Math.max(...samples) - Math.min(...samples)),
+      };
+    }
+
+    function packQuestion(criteria) {
+      return { type:"choice", criteria };
+    }
+
+    function questionCriteria(ids, descriptions) {
+      return Object.fromEntries(ids.map((id) => [id, descriptions[id]]));
+    }
+
+    function beginDecision(controller, { tick, wall_ms, state, forecast, checkpoint }) {
+      if (controller.pending) return null;
+      const sequence = controller.nextSequence;
+      controller.nextSequence += 1;
+      const record = {
+        run_id: controller.run_id,
+        epoch: controller.epoch,
+        sequence,
+        tick,
+        wall_ms,
+        state,
+        forecast,
+      };
+      controller.pending = record;
+      return {
+        schema_version: SCHEMA_VERSION,
+        run_id: controller.run_id,
+        epoch: controller.epoch,
+        sequence,
+        snapshot_tick: tick,
+        client_send_wall_ms: rounded(wall_ms),
+        state,
+        forecast,
+        checkpoint,
+        questions: {
+          path: packQuestion(PATH_DESCRIPTIONS),
+          fire: packQuestion(questionCriteria(FIRE_IDS, FIRE_DESCRIPTIONS)),
+          intent: packQuestion(questionCriteria(INTENT_IDS, INTENT_DESCRIPTIONS)),
+        },
+        samples: 1,
+        prompt_version: PROMPT_VERSION,
+        context_version: CONTEXT_VERSION,
+      };
+    }
+
+    function validateReply(controller, reply, { tick, wall_ms }) {
+      const pending = controller.pending;
+      if (!pending) return { ok:false, reason:"no_pending_request", current:false };
+      if (!reply || typeof reply !== "object") return { ok:false, reason:"invalid_reply", current:true };
+      if (!controller.run_id || reply.run_id !== controller.run_id) return { ok:false, reason:"wrong_run", current:false };
+      if (reply.epoch !== controller.epoch || reply.epoch !== pending.epoch) return { ok:false, reason:"stale_epoch", current:false };
+      if (reply.sequence !== pending.sequence || reply.sequence <= controller.lastAcceptedSequence) return { ok:false, reason:"stale_sequence", current:false };
+      const age = wall_ms - pending.wall_ms;
+      if (!Number.isFinite(age) || age < 0 || age > MAX_RESPONSE_AGE_MS) return { ok:false, reason:"age", age_ms:age, current:true };
+      if (!reply.api_ok) return { ok:false, reason:"api_failure", age_ms:age, current:true };
+      if (!reply.valid_choice) return { ok:false, reason:reply.error || "invalid_answer", age_ms:age, current:true };
+      if (typeof reply.decision_id !== "string" || !reply.decision_id.trim()) return { ok:false, reason:"missing_decision_id", age_ms:age, current:true };
+      if (!ACTION_IDS.includes(reply.movement)) return { ok:false, reason:"unknown_movement", age_ms:age, current:true };
+      if (!FIRE_IDS.includes(reply.fire)) return { ok:false, reason:"unknown_fire", age_ms:age, current:true };
+      if (!Object.hasOwn(LEASE_TICKS, reply.lease)) return { ok:false, reason:"unknown_lease", age_ms:age, current:true };
+      if (!INTENT_IDS.includes(reply.intent)) return { ok:false, reason:"unknown_intent", age_ms:age, current:true };
+      return { ok:true, age_ms:age, tick };
+    }
+
+    function receiveDecision(controller, reply, { tick, wall_ms }) {
+      const validation = validateReply(controller, reply, { tick, wall_ms });
+      const events = [];
+      if (!validation.ok) {
+        if (validation.current) controller.queued = { neutralize:true, reason:validation.reason, sequence:reply && reply.sequence || controller.pending && controller.pending.sequence || null };
+        controller.counters.rejected += 1;
+        events.push({ type:"response_rejected", tick, wall_ms, sequence:reply && Number.isInteger(reply.sequence) ? reply.sequence : controller.pending && controller.pending.sequence || null, reason:validation.reason, age_ms:validation.age_ms ?? null, neutralizes_current:Boolean(validation.current) });
+        return { events };
       }
-      if (next.active) event = {type:"override",reason:"expiry",selected:next.active.id,replacement:null};
-      const fallback = chooseFallback(candidates);
-      const active = startExecution(fallback,"local",nowMs);
-      next = {...next,active};
-      if (event) event.replacement=fallback.id;
-      return {lifecycle:next,execution:active,event,candidates};
+      const pending = controller.pending;
+      const decision = {
+        decision_id: reply.decision_id,
+        sequence: reply.sequence,
+        movement: reply.movement,
+        fire: reply.fire,
+        lease: reply.lease,
+        intent: reply.intent,
+        sent_wall_ms: pending.wall_ms,
+        received_wall_ms: wall_ms,
+        confidence: reply.confidence || {},
+      };
+      controller.queued = { decision };
+      controller.lastAcceptedSequence = reply.sequence;
+      controller.counters.accepted += 1;
+      events.push({ type:"response_received", tick, wall_ms, sequence:reply.sequence, decision_id:decision.decision_id, movement:decision.movement, fire:decision.fire, lease:decision.lease, intent:decision.intent, confidence:{ ...decision.confidence }, age_ms:validation.age_ms });
+      return { events };
     }
 
-    function advancePlayer(player,execution,dtSeconds,arena,nowMs) {
-      const requestedMs = Math.max(0,dtSeconds*1000);
-      const remainingMs = Math.max(0,execution.expiresAtMs-nowMs);
-      const appliedMs = Math.min(requestedMs,remainingMs);
-      const velocity = velocityFor(execution.id);
-      const displacement = {x:velocity.x*appliedMs/1000,y:velocity.y*appliedMs/1000};
-      return { player:{...player,x:clamp(player.x+displacement.x,arena.left,arena.right),y:clamp(player.y+displacement.y,arena.top,arena.bottom)}, appliedMs, unconsumedMs:requestedMs-appliedMs, displacement };
+    function endActive(controller, reason, tick, wall_ms, events) {
+      if (!controller.active) return;
+      events.push({ type:"command_ended", tick, wall_ms, sequence:controller.active.sequence, decision_id:controller.active.decision_id, movement:controller.active.movement, fire:controller.active.fire, lease:controller.active.lease, intent:controller.active.intent, confidence:{ ...controller.active.confidence }, start_tick:controller.active.start_tick, end_tick:controller.active.end_tick, reason });
+      controller.active = null;
     }
 
-    function markExecutionApplied(lifecycle,appliedMs) {
-      if (!lifecycle.active || lifecycle.active.counted || appliedMs<=0) return lifecycle;
-      const active = {...lifecycle.active,counted:true};
-      return {...lifecycle,active,lastExecutedId:active.id,executedCount:lifecycle.executedCount+1,jevExecutedCount:lifecycle.jevExecutedCount+(active.source==="jev"?1:0)};
+    function startNeutral(controller, reason, tick, wall_ms, events) {
+      if (!controller.neutral) {
+        events.push({ type:"neutral_started", tick, wall_ms, reason });
+      }
+      controller.neutral = true;
+      controller.lastNeutralReason = reason;
     }
 
-    function waveProfile(wave) {
-      const profiles = [{enemyType:"scout",bulletPattern:"aimed"},{enemyType:"swarm",bulletPattern:"spray"},{enemyType:"tank",bulletPattern:"sweep"}];
-      return Object.freeze({...profiles[(Math.max(1,wave)-1)%profiles.length],difficulty:"normal"});
+    function commandForTick(controller, { tick, wall_ms }) {
+      const events = [];
+      if (controller.active && (tick >= controller.active.end_tick || wall_ms >= controller.active.expires_wall_ms)) {
+        endActive(controller, "lease_expired", tick, wall_ms, events);
+        startNeutral(controller, "lease_expired", tick, wall_ms, events);
+      }
+      if (controller.queued && controller.queued.neutralize) {
+        endActive(controller, controller.queued.reason, tick, wall_ms, events);
+        startNeutral(controller, controller.queued.reason, tick, wall_ms, events);
+        controller.queued = null;
+      }
+      if (controller.queued && controller.queued.decision) {
+        const decision = controller.queued.decision;
+        const age = wall_ms - decision.sent_wall_ms;
+        if (!Number.isFinite(age) || age < 0 || age > MAX_RESPONSE_AGE_MS) {
+          endActive(controller, "age", tick, wall_ms, events);
+          startNeutral(controller, "age", tick, wall_ms, events);
+          events.push({ type:"response_rejected", tick, wall_ms, sequence:decision.sequence, reason:"age", age_ms:age });
+          controller.queued = null;
+        } else {
+          endActive(controller, "preempted", tick, wall_ms, events);
+          if (controller.neutral) events.push({ type:"neutral_ended", tick, wall_ms, reason:"djev_command" });
+          const ticks = LEASE_TICKS[decision.lease];
+          controller.active = {
+            decision_id: decision.decision_id,
+            sequence: decision.sequence,
+            movement: decision.movement,
+            fire: decision.fire,
+            lease: decision.lease,
+            intent: decision.intent,
+            confidence: { ...decision.confidence },
+            start_tick: tick,
+            end_tick: tick + ticks,
+            applied_wall_ms: wall_ms,
+            expires_wall_ms: wall_ms + ticks * DT_MS,
+          };
+          controller.neutral = false;
+          controller.lastAppliedIntent = decision.intent;
+          controller.queued = null;
+          controller.counters.applied += 1;
+          events.push({ type:"command_applied", tick, wall_ms, command:{ ...controller.active } });
+        }
+      }
+      if (!controller.active) {
+        controller.counters.neutralTicks += 1;
+        startNeutral(controller, controller.lastNeutralReason || "no_authority", tick, wall_ms, events);
+      }
+      return { command:controller.active ? { ...controller.active } : null, events };
     }
-    function nextWaveState(state) { const wave=state.wave+1; return {wave,profile:waveProfile(wave)}; }
-    function rollingCompletedRate(events,nowMs,windowMs=10000) { return events.filter((at)=>at>nowMs-windowMs&&at<=nowMs).length/(windowMs/1000); }
 
-    globalThis.SpaceDecisionCore = Object.freeze({ ACTION_MS,LOOKAHEAD_MS,ACTION_SPEED,MAX_RESPONSE_AGE_MS,SAFETY_MARGIN_PX,ACTION_IDS,velocityFor,arenaFor,planAction,sweptContact,segmentClearance,evaluateCandidates,chooseFallback,shouldRequestModel,createLifecycle,makeRequestRecord,validateReply,acceptReply,clearPendingIfCurrent,invalidateLifecycle,resolveAction,advancePlayer,markExecutionApplied,waveProfile,nextWaveState,rollingCompletedRate });
+    function finishDecision(controller, { sequence, wall_ms, transport_error = null }) {
+      const events = [];
+      if (!controller.pending || controller.pending.sequence !== sequence) return { events };
+      const latency = Math.max(0, wall_ms - controller.pending.wall_ms);
+      controller.completedLatencies.push(latency);
+      controller.completedLatencies = controller.completedLatencies.slice(-8);
+      controller.counters.completed += 1;
+      if (transport_error) {
+        controller.counters.failures += 1;
+        controller.backoffMs = controller.backoffMs ? Math.min(800, controller.backoffMs * 2) : 100;
+        controller.queued = { neutralize:true, reason:"transport_error", sequence };
+        events.push({ type:"response_rejected", tick:controller.pending.tick, wall_ms, sequence, reason:"transport_error", error:String(transport_error), latency_ms:latency });
+      } else {
+        controller.backoffMs = 0;
+      }
+      controller.pending = null;
+      return { events };
+    }
+
+    function invalidateController(controller, reason) {
+      const events = [];
+      endActive(controller, reason, null, null, events);
+      if (controller.pending) events.push({ type:"response_rejected", tick:controller.pending.tick, wall_ms:null, sequence:controller.pending.sequence, reason:"invalidated" });
+      controller.epoch += 1;
+      controller.pending = null;
+      controller.queued = null;
+      controller.active = null;
+      controller.lastAppliedIntent = null;
+      controller.neutral = true;
+      controller.lastNeutralReason = reason;
+      return { events:[...events, { type:"neutral_started", tick:null, wall_ms:null, reason }] };
+    }
+
+    globalThis.SpaceDjevController = Object.freeze({
+      CONTROLLER_VERSION, SCHEMA_VERSION, PROMPT_VERSION, CONTEXT_VERSION, MAX_RESPONSE_AGE_MS, INTENT_IDS,
+      createController, beginDecision, receiveDecision, commandForTick, finishDecision, invalidateController,
+      latencyStats,
+    });
   })();
   </script>
 
   <script>
   (() => {
     "use strict";
+
     const core = globalThis.SpaceDecisionCore;
+    const djev = globalThis.SpaceDjevController;
     const $ = (id) => document.getElementById(id);
     const canvas = $("game");
     const ctx = canvas.getContext("2d");
-    const W=canvas.width,H=canvas.height,REQUEST_INTERVAL_MS=450;
-    const random=(min,max)=>min+Math.random()*(max-min);
-    const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-    const stars=Array.from({length:100},()=>({x:random(0,W),y:random(0,H),speed:random(12,70),size:random(.5,2),alpha:random(.2,.8)}));
-    const player={x:W/2,y:H-70,w:20,h:18,speed:280,cooldown:0,invincible:0};
-    let playerBullets=[],enemyBullets=[],enemies=[],particles=[],keys=new Set(),pointerTarget=null;
-    let game={wave:1,score:0,lives:3,profile:core.waveProfile(1)};
-    let controller=core.createLifecycle(1),autopilot=true,paused=false,gameOver=false,waveActive=false;
-    let simElapsedMs=0,lastFrame=performance.now(),nextRequestAt=0,enemyFireClock=.8,waveClock=0;
-    let runId="",history=[],lastCandidates=[],lastSelected="none",lastExecuted="local · hold",lastOverride="none";
-    let callCount=0,failureCount=0,completionEvents=[],lastApi={latency_ms:null,api_token_throughput:null,usage:{input_tokens:null,output_tokens:null}};
+    const W = canvas.width;
+    const H = canvas.height;
+    const FIXED_DT_MS = core.DT_MS;
+    const MAX_LAG_MS = 250;
+    const MAX_CATCHUP_STEPS = 12;
+    const CLIENT_TIMEOUT_MS = 2300;
+    const visualRandom = (() => {
+      let state = 0x5eedc0de;
+      return () => {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        state >>>= 0;
+        return state / 4294967296;
+      };
+    })();
+    const random = (min, max) => min + visualRandom() * (max - min);
+    const stars = Array.from({ length:100 }, () => ({ x:random(0, W), y:random(0, H), speed:random(12, 70), size:random(.5, 2), alpha:random(.2, .8) }));
 
-    function addHistory(kind,text,tone="") { history.unshift({kind,text,tone}); history=history.slice(0,7); $("history").innerHTML=history.map((item)=>`<div class="history-item ${item.tone}"><b>${item.kind}</b><span>${item.text}</span><span>${(simElapsedMs/1000).toFixed(1)}s</span></div>`).join(""); }
-    function snapshot() {
-      const factor=1;
-      return {width:W,height:H,player:{...player},waveProfile:game.profile,
-        bullets:enemyBullets.map((b)=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,w:8,h:8,kind:"bullet"})),
-        enemies:enemies.map((e)=>({x:e.x,y:e.y,vx:e.vx*factor+Math.sin(waveClock*2+e.phase)*(e.type==="swarm"?28:9),vy:(18+game.wave*1.5)*factor,w:e.w,h:e.h,kind:"enemy"}))};
-    }
-    function invalidate(reason) {
-      const pending=controller.pending;
-      if (pending?.abortController) pending.abortController.abort();
-      controller=core.invalidateLifecycle(controller,reason);
-      lastOverride=reason;
-    }
-    function setPaused(value) { if (paused===value) return; paused=value; invalidate(value?"paused":"resume"); $("pause-button").textContent=paused?"Resume":"Pause"; }
-    function candidatePayload(candidates) { return candidates.filter((c)=>c.safe).map((c)=>({id:c.id,clearance_px:c.clearance===null?null:Number(c.clearance.toFixed(3)),center_cost:Number(c.centerCost.toFixed(4)),room_px:Number(c.room.toFixed(3)),switch_cost:c.switchCost,soft_cost:Number(c.softCost.toFixed(4))})); }
+    let game = null;
+    let controller = null;
+    let autopilot = true;
+    let paused = false;
+    let runId = null;
+    let runToken = 0;
+    let runStartPerf = performance.now();
+    let accumulatorMs = 0;
+    let lastFrame = performance.now();
+    let history = [];
+    let runState = null;
+    let tracePath = "not started";
+    let qualification = { valid:true, reason:"pending trace" };
+    let lastObservation = null;
+    let recentCommands = [];
+    let recentHits = [];
+    let completionEvents = [];
+    let lastApi = { latency_ms:null, api_token_throughput:null, usage:{ input_tokens:null, output_tokens:null } };
+    let lastSelected = "none";
+    let lastExecuted = "neutral · hold · cease";
+    let nextRequestAllowedWallMs = 0;
+    let difficulty = core.normalizeDifficulty({});
+    const isFileProtocol = location.protocol === "file:";
 
-    async function requestDecision() {
-      if (paused||gameOver||!autopilot||controller.pending) return;
-      const candidates=core.evaluateCandidates(snapshot(),controller.active?.id||controller.lastExecutedId);
-      if (!core.shouldRequestModel(candidates)) return;
-      const abortController=new AbortController();
-      const made=core.makeRequestRecord(controller,candidates,performance.now(),abortController);
-      controller=made.lifecycle;
-      const record=made.record;
-      $("request-status").textContent=`pending · E${record.epoch}/S${record.sequence}`;
-      const body={epoch:record.epoch,sequence:record.sequence,player:{x:player.x,y:player.y},previous_action:controller.lastExecutedId,candidates:candidatePayload(candidates)};
-      const timeout=window.setTimeout(()=>abortController.abort(),2500);
+    function wallMs(run = runState) {
+      return performance.now() - (run ? run.startedPerf : runStartPerf);
+    }
+
+    function isCurrentRun(run) {
+      return run === runState && run.token === runToken && run.controller === controller;
+    }
+
+    function addHistory(kind, text, tone = "") {
+      history.unshift({ kind, text, tone, at:(game ? game.sim_ms : 0) / 1000 });
+      history = history.slice(0, 8);
+      $("history").innerHTML = history.map((item) => `<div class="history-item ${item.tone}"><b>${item.kind}</b><span>${item.text}</span><span>${item.at.toFixed(1)}s</span></div>`).join("");
+    }
+
+    function invalidateQualification(reason, run = runState) {
+      const previous = run ? run.qualification : qualification;
+      if (!previous.valid && previous.reason === reason) return;
+      const invalid = { valid:false, reason };
+      if (run) run.qualification = invalid;
+      enqueueEvents([{ type:"qualification_invalidated", tick:run ? run.game.tick : game ? game.tick : 0, wall_ms:wallMs(run), reason }], run);
+      if (!run || isCurrentRun(run)) {
+        qualification = invalid;
+        addHistory("invalid", reason, "warn");
+      }
+    }
+
+    function eventEnvelope(event, run) {
+      const tick = Number.isFinite(event.tick) ? event.tick : run.game.tick;
+      return {
+        event_id: run.nextEventId++,
+        epoch: run.controller.epoch,
+        sequence: Number.isInteger(event.sequence) ? event.sequence : null,
+        tick,
+        sim_ms: tick * core.DT_MS,
+        wall_ms: Number.isFinite(event.wall_ms) ? event.wall_ms : wallMs(run),
+        type: event.type,
+        payload: { ...event },
+      };
+    }
+
+    function enqueueEvents(events, run = runState) {
+      if (!run || run.complete || !events || !events.length) return;
+      for (const event of events) run.traceQueue.push(eventEnvelope(event, run));
+      if (run.traceQueue.length > 5000) invalidateQualification("trace_buffer_overflow", run);
+      flushEvents(run);
+    }
+
+    function flushEvents(run = runState) {
+      if (!run || run.complete || !run.id || !run.traceQueue.length) return Promise.resolve();
+      if (run.flushPromise) return run.flushPromise;
+      const batch = run.traceQueue.slice(0, 64);
+      run.flushPromise = Promise.resolve().then(async () => {
+        try {
+          const response = await fetch("/api/run/event", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json" },
+            body:JSON.stringify({ schema_version:1, run_id:run.id, events:batch }),
+          });
+          if (!response.ok) throw new Error(`trace ${response.status}`);
+          const ack = await response.json();
+          if (ack.run_id !== run.id || ack.acked_event_id !== batch[batch.length - 1].event_id) throw new Error("trace_ack_mismatch");
+          run.traceQueue = run.traceQueue.filter((event) => event.event_id > ack.acked_event_id);
+        } catch (error) {
+          invalidateQualification("trace_error", run);
+        } finally {
+          run.flushPromise = null;
+          if (run.traceQueue.length && !run.ending) run.retryTimer = setTimeout(() => flushEvents(run), 250);
+        }
+      });
+      return run.flushPromise;
+    }
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    async function drainTrace(run = runState, timeoutMs = 5000) {
+      if (!run) return true;
+      const deadline = performance.now() + timeoutMs;
+      while ((run.traceQueue.length || run.flushPromise) && performance.now() < deadline) {
+        await flushEvents(run);
+        if (run.traceQueue.length || run.flushPromise) await sleep(80);
+      }
+      return !run.traceQueue.length && !run.flushPromise;
+    }
+
+    function waitForPendingDecisionBeforeEnd(run, timeoutMs = CLIENT_TIMEOUT_MS + 400) {
+      if (!run.decisionPromise) return Promise.resolve(true);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), timeoutMs);
+        run.decisionPromise.then(() => { clearTimeout(timer); resolve(true); }, () => { clearTimeout(timer); resolve(false); });
+      });
+    }
+
+    function discardTerminalQueuedCommand(run) {
+      if (!run.controller.queued || !run.controller.queued.decision) return;
+      const decision = run.controller.queued.decision;
+      enqueueEvents([{ type:"response_rejected", tick:run.game.tick, wall_ms:wallMs(run), sequence:decision.sequence, decision_id:decision.decision_id, reason:"terminal_not_applied", neutralizes_current:false }], run);
+      run.controller.queued = null;
+    }
+
+    async function engineSourceHash() {
+      const coreText = $("space-decision-core").textContent;
+      const controllerText = $("space-djev-controller").textContent;
+      const bytes = new TextEncoder().encode(coreText + "\n" + controllerText);
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+
+    function syncDifficultyControls() {
+      $("bullet-density").value = difficulty.bulletDensity;
+      $("enemy-density").value = difficulty.enemyDensity;
+      $("fast-bullet-ratio").value = difficulty.fastBulletRatio;
+      $("fast-bullet-speed").value = difficulty.fastBulletSpeed;
+      $("bullet-density-value").textContent = difficulty.bulletDensity.toFixed(2) + "x";
+      $("enemy-density-value").textContent = difficulty.enemyDensity.toFixed(2) + "x";
+      $("fast-bullet-ratio-value").textContent = Math.round(difficulty.fastBulletRatio * 100) + "%";
+      $("fast-bullet-speed-value").textContent = difficulty.fastBulletSpeed.toFixed(2) + "x";
+    }
+
+    function readDifficultyControls() {
+      difficulty = core.normalizeDifficulty({
+        bulletDensity:$("bullet-density").value,
+        enemyDensity:$("enemy-density").value,
+        fastBulletRatio:$("fast-bullet-ratio").value,
+        fastBulletSpeed:$("fast-bullet-speed").value,
+      });
+      syncDifficultyControls();
+      invalidateQualification("difficulty_changed");
+      const result = djev.invalidateController(controller, "difficulty_changed");
+      enqueueEvents(result.events);
+      addHistory("tuning", `bullets ${difficulty.bulletDensity.toFixed(2)}x · enemies ${difficulty.enemyDensity.toFixed(2)}x · fast ${Math.round(difficulty.fastBulletRatio * 100)}%`, "warn");
+      restartRun("difficulty_changed");
+    }
+
+    function controllerActiveForObservation() {
+      if (!controller || !controller.active) return null;
+      return {
+        movement:controller.active.movement,
+        fire:controller.active.fire,
+        lease:controller.active.lease,
+        intent:controller.active.intent,
+        remaining_ms:Math.max(0, Math.min((controller.active.end_tick - game.tick) * core.DT_MS, controller.active.expires_wall_ms - wallMs())),
+        wall_ms:wallMs(),
+        expires_wall_ms:controller.active.expires_wall_ms,
+      };
+    }
+
+    function currentObservation() {
+      const stats = djev.latencyStats(controller);
+      return core.observeGame(game, {
+        expected_delay_ms:stats.expected_delay_ms,
+        latency_samples:stats.latency_samples,
+        latency_spread_ms:stats.latency_spread_ms,
+        last_intent:controller.lastAppliedIntent,
+        active_command:controllerActiveForObservation(),
+        recent_commands:recentCommands.slice(-6),
+        recent_hits:recentHits.slice(-4),
+      });
+    }
+
+    function pushRecentCommand(span) {
+      recentCommands.push(span);
+      recentCommands = recentCommands.slice(-12);
+    }
+
+    function lastRecentCommand() {
+      return recentCommands[recentCommands.length - 1] || null;
+    }
+
+    function findRecentDjevSpan(sequence) {
+      for (let index = recentCommands.length - 1; index >= 0; index -= 1) {
+        const span = recentCommands[index];
+        if (span.source === "djev" && span.sequence === sequence) return span;
+      }
+      return null;
+    }
+
+    function recordNeutralTick(reason) {
+      let span = lastRecentCommand();
+      if (!span || span.source !== "neutral" || span.reason !== reason) {
+        span = { movement:"hold", fire:"cease", lease:null, elapsed_ms:0, dx:0, dy:0, source:"neutral", reason };
+        pushRecentCommand(span);
+      }
+      span.elapsed_ms += core.DT_MS;
+    }
+
+    function recordDjevTick(command) {
+      const span = findRecentDjevSpan(command.sequence);
+      if (span) span.elapsed_ms = Math.max(span.elapsed_ms || 0, (game.tick - command.start_tick) * core.DT_MS);
+    }
+
+    function currentExecutingText() {
+      if (paused) return controller.active ? "paused · active command cleared" : "paused · no active command";
+      if (game.terminal) return "ended · no active command";
+      if (!controller.active) return `neutral · hold · cease · ${controller.lastNeutralReason || "no_authority"}`;
+      const remaining = Math.max(0, controller.active.end_tick - game.tick);
+      return `djev · ${controller.active.movement} · ${controller.active.fire} · ${controller.active.lease} · ${modelIntentText(controller.active)} · ${remaining} ticks`;
+    }
+
+    function modelIntentText(command) {
+      const labels = { evade:"避险", recover:"回中", position:"稳定站位" };
+      if (!Object.hasOwn(labels, command.intent)) return "无模型意图";
+      const probability = command.confidence?.intent;
+      const displayed = Number.isFinite(probability) && probability >= 0 && probability <= 1 ? probability.toFixed(3) : "—";
+      return `${labels[command.intent]} (${command.intent}) · API p=${displayed}`;
+    }
+
+    function updateRecentFromEvents(events) {
+      for (const event of events) {
+        if (event.type === "command_applied") {
+          pushRecentCommand({ movement:event.command.movement, fire:event.command.fire, lease:event.command.lease, intent:event.command.intent, elapsed_ms:0, dx:0, dy:0, source:"djev", sequence:event.command.sequence, start_tick:event.command.start_tick });
+          lastSelected = `${event.command.movement} · ${event.command.fire} · ${event.command.lease} · ${modelIntentText(event.command)} · S${event.command.sequence}`;
+          addHistory("applied", lastSelected, "ok");
+        } else if (event.type === "command_ended") {
+          const last = recentCommands[recentCommands.length - 1];
+          if (last && last.sequence === event.sequence && Number.isFinite(event.tick) && Number.isFinite(event.start_tick)) last.elapsed_ms = Math.max(0, (event.tick - event.start_tick) * core.DT_MS);
+          addHistory("ended", `${event.reason} · ${modelIntentText(event)} · S${event.sequence ?? "n/a"}`, event.reason === "lease_expired" ? "" : "warn");
+        } else if (event.type === "movement") {
+          const span = findRecentDjevSpan(event.sequence);
+          if (span) {
+            span.dx += event.dx || 0;
+            span.dy += event.dy || 0;
+            span.elapsed_ms = Math.max(span.elapsed_ms || 0, (event.tick + 1 - span.start_tick) * core.DT_MS);
+          }
+        } else if (event.type === "neutral_started") {
+          addHistory("neutral", event.reason || "no authority", event.reason === "startup" ? "" : "warn");
+        } else if (event.type === "hit") {
+          recentHits.push({ sim_ms:game.sim_ms, ago_ms:0, kind:event.source.kind, x:event.source.x, y:event.source.y, vx:event.source.vx, vy:event.source.vy, lives_after:event.after_lives });
+          recentHits = recentHits.filter((hit) => game.sim_ms - hit.sim_ms <= 5000);
+          addHistory("hit", `${event.source.kind} · lives ${event.after_lives}`, "bad");
+        } else if (event.type === "response_rejected") {
+          addHistory("rejected", `${event.reason} · S${event.sequence ?? "n/a"}`, "warn");
+        } else if (event.type === "response_received") {
+          addHistory("djev", `${event.movement} · ${event.fire} · ${event.lease} · ${modelIntentText(event)}`, "ok");
+        } else if (event.type === "terminal") {
+          addHistory("terminal", event.reason, "bad");
+        }
+      }
+    }
+
+    async function startTrace(manifest, run) {
+      enqueueEvents([{ type:"checkpoint", tick:run.game.tick, wall_ms:wallMs(run), hash:core.hashGame(run.game), checkpoint:core.serializeGame(run.game) }], run);
       try {
-        const response=await fetch("/api/decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:abortController.signal});
-        if (!response.ok) throw new Error(`bridge ${response.status}`);
-        const reply=await response.json();
-        const completedAt=performance.now();
-        if (record.epoch!==controller.epoch) return;
-        completionEvents.push(completedAt); completionEvents=completionEvents.filter((at)=>at>completedAt-10000); callCount+=1; lastApi=reply;
-        if (!reply.api_ok) failureCount+=1;
-        const accepted=core.acceptReply(reply,record,controller,completedAt,{running:!paused&&!gameOver,autopilot});
-        controller=accepted.lifecycle;
-        if (accepted.event.type==="selected") { lastSelected=`${accepted.event.id} · E${accepted.event.epoch}/S${accepted.event.sequence} · ${accepted.event.ageMs.toFixed(0)} ms`; addHistory("selected",lastSelected,"ok"); }
-        else { lastSelected=`${reply.movement||"none"} · rejected (${accepted.event.reason})`; lastOverride=accepted.event.reason; addHistory("rejected",lastSelected,"warn"); }
+        const response = await fetch("/api/run/start", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body:JSON.stringify({ schema_version:1, manifest }),
+        });
+        if (!response.ok) throw new Error(`run/start ${response.status}`);
+        const data = await response.json();
+        run.id = data.run_id;
+        run.controller.run_id = run.id;
+        if (run.id && run.qualification.valid) run.qualification.reason = "recording";
+        flushEvents(run);
+        if (!isCurrentRun(run)) return;
+        runId = run.id;
+        tracePath = data.trace_path || "trace open";
+        $("hud-run").textContent = runId;
+        $("trace-path").textContent = tracePath;
+        addHistory("run", runId, "ok");
       } catch (error) {
-        if (record.epoch===controller.epoch&&controller.pending===record) { completionEvents.push(performance.now()); callCount+=1; failureCount+=1; lastSelected="none · request failed"; lastOverride=error.name==="AbortError"?"timeout":error.message; addHistory("failure",lastOverride,"bad"); }
+        invalidateQualification("trace_start_failed", run);
+        if (!isCurrentRun(run)) return;
+        runId = null;
+        tracePath = "start failed";
+        $("hud-run").textContent = "untraced";
+        $("trace-path").textContent = String(error.message || error);
+      }
+    }
+
+    function maybeBeginDecision() {
+      if (isFileProtocol) return;
+      const run = runState;
+      if (!run || run.ending || !autopilot || paused || game.terminal || !runId || controller.pending || run.decisionPromise || wallMs() < nextRequestAllowedWallMs) return;
+      const observation = currentObservation();
+      const checkpoint = core.serializeGame(game);
+      const requestBody = djev.beginDecision(controller, {
+        tick:game.tick,
+        wall_ms:wallMs(),
+        state:observation.state,
+        forecast:observation.forecast,
+        checkpoint,
+      });
+      if (!requestBody) return;
+      lastObservation = observation;
+      const sequence = requestBody.sequence;
+      enqueueEvents([{ type:"decision_requested", tick:game.tick, wall_ms:wallMs(), sequence, state:observation.state, forecast:observation.forecast, checkpoint_hash:core.hashGame(game) }]);
+      $("request-status").textContent = `pending · E${controller.epoch}/S${sequence}`;
+      const pending = run.controller.pending;
+      const operation = sendDecision(run, requestBody, pending);
+      run.decisionPromise = operation;
+      operation.finally(() => {
+        if (run.decisionPromise === operation) run.decisionPromise = null;
+      });
+      return operation;
+    }
+
+    async function sendDecision(run, requestBody, pending) {
+      const initiatingController = run.controller;
+      const sequence = requestBody.sequence;
+      const ownsPending = () => initiatingController.pending === pending && initiatingController.epoch === requestBody.epoch;
+      const recordEvents = (events) => {
+        if (isCurrentRun(run) && !run.ending && ownsPending()) updateRecentFromEvents(events);
+        enqueueEvents(events, run);
+      };
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), CLIENT_TIMEOUT_MS);
+      try {
+        const response = await fetch("/api/decision", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body:JSON.stringify(requestBody),
+          signal:abortController.signal,
+        });
+        if (!response.ok) throw new Error(`bridge ${response.status}`);
+        const reply = await response.json();
+        const receivedWall = wallMs(run);
+        if (isCurrentRun(run) && !run.ending && ownsPending()) {
+          lastApi = reply;
+          completionEvents.push(receivedWall);
+          completionEvents = completionEvents.filter((at) => at > receivedWall - 10000);
+          recordEvents(djev.receiveDecision(initiatingController, reply, { tick:run.game.tick, wall_ms:receivedWall }).events);
+        } else {
+          enqueueEvents([{ type:"response_rejected", tick:run.game.tick, wall_ms:receivedWall, sequence,
+            decision_id:reply.decision_id ?? null, api_ok:reply.api_ok, valid_choice:reply.valid_choice,
+            reason:run.ending ? "terminal_not_applied" : "obsolete_request", neutralizes_current:false }], run);
+        }
+        if (ownsPending()) recordEvents(djev.finishDecision(initiatingController, { sequence, wall_ms:receivedWall }).events);
+      } catch (error) {
+        const failedWall = wallMs(run);
+        const transportError = error.name === "AbortError" ? "client_timeout" : error.message;
+        if (isCurrentRun(run) && !run.ending && ownsPending()) {
+          completionEvents.push(failedWall);
+          completionEvents = completionEvents.filter((at) => at > failedWall - 10000);
+          const finished = djev.finishDecision(initiatingController, { sequence, wall_ms:failedWall, transport_error:transportError });
+          updateRecentFromEvents(finished.events);
+          enqueueEvents(finished.events, run);
+          nextRequestAllowedWallMs = failedWall + initiatingController.backoffMs;
+        } else {
+          enqueueEvents([{ type:"response_rejected", tick:run.game.tick, wall_ms:failedWall, sequence,
+            reason:run.ending ? "terminal_transport_error" : "obsolete_request", error:transportError, neutralizes_current:false }], run);
+          if (ownsPending()) djev.finishDecision(initiatingController, { sequence, wall_ms:failedWall, transport_error:transportError });
+        }
       } finally {
-        window.clearTimeout(timeout);
-        controller=core.clearPendingIfCurrent(controller,record);
-        nextRequestAt=performance.now()+REQUEST_INTERVAL_MS;
+        clearTimeout(timeout);
       }
     }
 
-    function updateAutopilot(dt) {
-      let remainingMs=dt*1000;
-      let nowMs=simElapsedMs;
-      const wallNowMs=performance.now();
-      while (remainingMs>1e-7) {
-        const resolved=core.resolveAction(snapshot(),controller,nowMs,wallNowMs);
-        controller=resolved.lifecycle; lastCandidates=resolved.candidates;
-        if (resolved.event) { lastOverride=`${resolved.event.reason}: ${resolved.event.selected} → ${resolved.event.replacement}`; addHistory("override",lastOverride,"warn"); }
-        const arena=core.arenaFor(W,H,player.w,player.h);
-        const moved=core.advancePlayer(player,resolved.execution,remainingMs/1000,arena,nowMs);
-        player.x=moved.player.x; player.y=moved.player.y;
-        controller=core.markExecutionApplied(controller,moved.appliedMs);
-        lastExecuted=`${resolved.execution.source} · ${resolved.execution.id} · ${Math.max(0,resolved.execution.expiresAtMs-(nowMs+moved.appliedMs)).toFixed(0)} ms · Δ${moved.displacement.x.toFixed(1)},${moved.displacement.y.toFixed(1)}`;
-        if (!resolved.execution.counted&&moved.appliedMs>0) addHistory("executed",`${resolved.execution.source} · ${resolved.execution.id}`,resolved.execution.source==="jev"?"ok":"");
-        if (moved.appliedMs<=0&&moved.unconsumedMs>=remainingMs) break;
-        remainingMs=moved.unconsumedMs; nowMs+=moved.appliedMs;
+    function endRun(reason, run = runState) {
+      if (!run) return Promise.resolve();
+      if (run.finalization) return run.finalization;
+      const endingGame = run.game;
+      const terminalBase = {
+        reason,
+        tick:endingGame.tick,
+        sim_ms:endingGame.sim_ms,
+        wall_ms:wallMs(run),
+        lives:endingGame.player.lives,
+        wave:endingGame.wave,
+        score:endingGame.score,
+      };
+      run.ending = terminalBase;
+      clearTimeout(run.retryTimer);
+      const checkpoint = core.serializeGame(endingGame);
+      const hash = core.hashGame(endingGame);
+      discardTerminalQueuedCommand(run);
+      const invalidated = djev.invalidateController(run.controller, reason);
+      enqueueEvents(invalidated.events.map((event) => ({ ...event, tick:terminalBase.tick, wall_ms:terminalBase.wall_ms })), run);
+      enqueueEvents([{ type:"checkpoint", tick:terminalBase.tick, wall_ms:terminalBase.wall_ms, hash, checkpoint, final:true }], run);
+      run.finalization = Promise.resolve().then(async () => {
+        await run.startPromise;
+        const settled = await waitForPendingDecisionBeforeEnd(run);
+        if (!settled) invalidateQualification("pending_decision_unsettled_at_end", run);
+        if (!run.id) return;
+        const terminal = { ...terminalBase, qualification_violations:run.qualification.valid ? [] : [run.qualification.reason] };
+        enqueueEvents([{ type:"terminal", tick:terminalBase.tick, wall_ms:terminalBase.wall_ms, reason, terminal, hash }], run);
+        try {
+          const drained = await drainTrace(run);
+          if (!drained) throw new Error("trace_not_fully_acked");
+          terminal.qualification_violations = run.qualification.valid ? [] : [run.qualification.reason];
+          const response = await fetch("/api/run/end", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json" },
+            body:JSON.stringify({ schema_version:1, run_id:run.id, last_event_id:run.nextEventId - 1, terminal }),
+          });
+          if (!response.ok) throw new Error(`run/end ${response.status}`);
+          const result = await response.json();
+          if (result.run_id !== run.id || !result.complete) throw new Error("run_end_incomplete");
+          run.complete = true;
+          if (run.qualification.valid) run.qualification.reason = `trace complete · ${terminalBase.reason}`;
+        } catch (error) {
+          invalidateQualification("trace_end_failed", run);
+        }
+      });
+      return run.finalization;
+    }
+
+    function processTick() {
+      if (runState && runState.ending) return;
+      const nowWall = wallMs();
+      const resolved = djev.commandForTick(controller, { tick:game.tick, wall_ms:nowWall });
+      updateRecentFromEvents(resolved.events);
+      enqueueEvents(resolved.events);
+      const stepped = core.stepGame(game, resolved.command);
+      if (resolved.command) {
+        lastExecuted = `djev · ${resolved.command.movement} · ${resolved.command.fire} · ${resolved.command.lease} · ${modelIntentText(resolved.command)} · ${(resolved.command.end_tick - game.tick).toFixed(0)} ticks`;
+      } else {
+        lastExecuted = `neutral · hold · cease · ${controller.lastNeutralReason}`;
+      }
+      updateRecentFromEvents(stepped.events);
+      enqueueEvents(stepped.events.filter((event) => event.type !== "terminal"));
+      if (resolved.command) recordDjevTick(resolved.command);
+      else recordNeutralTick(controller.lastNeutralReason || "no_authority");
+      if (game.terminal) endRun(game.terminal.reason);
+      else {
+        if (game.tick % 60 === 0) enqueueEvents([{ type:"checkpoint", tick:game.tick, wall_ms:nowWall, hash:core.hashGame(game), checkpoint:core.serializeGame(game) }]);
+        maybeBeginDecision();
       }
     }
 
-    function updateManual(dt) {
-      const arena=core.arenaFor(W,H,player.w,player.h);
-      const ax=(keys.has("arrowright")||keys.has("d")?1:0)-(keys.has("arrowleft")||keys.has("a")?1:0);
-      const ay=(keys.has("arrowdown")||keys.has("s")?1:0)-(keys.has("arrowup")||keys.has("w")?1:0);
-      const mag=Math.hypot(ax,ay)||1;
-      player.x=clamp(player.x+ax/mag*player.speed*dt,arena.left,arena.right); player.y=clamp(player.y+ay/mag*player.speed*dt,arena.top,arena.bottom);
-      if (pointerTarget) { player.x=clamp(player.x+(pointerTarget.x-player.x)*Math.min(1,dt*11),arena.left,arena.right); player.y=clamp(player.y+(pointerTarget.y-player.y)*Math.min(1,dt*11),arena.top,arena.bottom); }
-      lastExecuted=`manual · Δ${(ax/mag*player.speed*dt).toFixed(1)},${(ay/mag*player.speed*dt).toFixed(1)}`;
-      lastCandidates=core.evaluateCandidates(snapshot(),controller.lastExecutedId);
+    function updateManual(dtSeconds) {
+      invalidateQualification("manual_input");
+      const arena = core.arenaFor(game);
+      const ax = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
+      const ay = (keys.has("arrowdown") || keys.has("s") ? 1 : 0) - (keys.has("arrowup") || keys.has("w") ? 1 : 0);
+      const mag = Math.hypot(ax, ay) || 1;
+      game.player.x = Math.max(arena.left, Math.min(arena.right, game.player.x + ax / mag * 280 * dtSeconds));
+      game.player.y = Math.max(arena.top, Math.min(arena.bottom, game.player.y + ay / mag * 280 * dtSeconds));
+      lastExecuted = `manual · ${((ax / mag) * 280 * dtSeconds).toFixed(1)},${((ay / mag) * 280 * dtSeconds).toFixed(1)}`;
+      const stepped = core.stepGame(game, null);
+      updateRecentFromEvents(stepped.events);
+      enqueueEvents(stepped.events.filter((event) => event.type !== "terminal"));
+      recordNeutralTick("manual");
+      if (game.terminal) endRun(game.terminal.reason);
+      else if (game.tick % 60 === 0) enqueueEvents([{ type:"checkpoint", tick:game.tick, wall_ms:wallMs(), hash:core.hashGame(game), checkpoint:core.serializeGame(game) }]);
     }
 
-    function createEnemy(type,index,count) { const tank=type==="tank",swarm=type==="swarm"; const w=tank?48:swarm?23:32,h=tank?34:swarm?19:24; return {type,x:75+(index%Math.min(count,8))*112+random(-20,20),y:-35-Math.floor(index/8)*62,w,h,hp:tank?4:swarm?1:2,maxHp:tank?4:swarm?1:2,vx:(swarm?76:35)*(index%2?1:-1),phase:random(0,Math.PI*2)}; }
-    function startWave() { game.profile=core.waveProfile(game.wave); const t=game.profile.enemyType; const count=t==="tank"?Math.min(4+Math.floor(game.wave/3),6):t==="swarm"?Math.min(10+game.wave,20):Math.min(6+Math.floor(game.wave/2),12); enemies=Array.from({length:count},(_,i)=>createEnemy(t,i,count)); playerBullets=[];enemyBullets=[];enemyFireClock=.8;waveClock=0;waveActive=true; }
-    function nextWave() { if (!waveActive||gameOver) return; waveActive=false; const next=core.nextWaveState(game); game.wave=next.wave;game.profile=next.profile;startWave(); }
-    function enemyShoot() { if (!enemies.length)return; const enemy=enemies[Math.floor(Math.random()*enemies.length)],dx=player.x-enemy.x,dy=player.y-enemy.y,angle=Math.atan2(dy,dx),speed=169; const add=(a,s=speed)=>enemyBullets.push({x:enemy.x,y:enemy.y+enemy.h/2,vx:Math.cos(a)*s,vy:Math.sin(a)*s,radius:4}); if(game.profile.bulletPattern==="spray")[-.18,0,.18].forEach((o)=>add(angle+o,speed*.88)); else if(game.profile.bulletPattern==="sweep")enemyBullets.push({x:random(38,W-38),y:-8,vx:0,vy:speed*.92,radius:5,sweep:true}); else add(angle); }
-    const overlaps=(a,b)=>Math.abs(a.x-b.x)<(a.w||a.radius*2)/2+(b.w||b.radius*2)/2&&Math.abs(a.y-b.y)<(a.h||a.radius*2)/2+(b.h||b.radius*2)/2;
-    function hitPlayer() { if(player.invincible>0||gameOver)return;game.lives-=1;player.invincible=1.1;addParticles(player.x,player.y,"#ff7086",22);if(game.lives<=0){gameOver=true;waveActive=false;invalidate("game_over");} }
-    function addParticles(x,y,color,count=8){for(let i=0;i<count;i+=1)particles.push({x,y,vx:random(-120,120),vy:random(-120,120),life:random(.3,.8),maxLife:.8,color});}
+    const keys = new Set();
 
-    function update(dt) {
-      if(paused||gameOver)return;
-      stars.forEach((s)=>{s.y+=s.speed*dt;if(s.y>H){s.y=0;s.x=random(0,W);}});particles=particles.filter((p)=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;return p.life>0;});if(player.invincible>0)player.invincible-=dt;
-      if(autopilot)updateAutopilot(dt);else updateManual(dt);
-      player.cooldown-=dt;if(player.cooldown<=0){playerBullets.push({x:player.x,y:player.y-20,vy:-580,radius:3});player.cooldown=.17;}
-      playerBullets=playerBullets.filter((b)=>{b.y+=b.vy*dt;return b.y>-15;});
-      enemyBullets=enemyBullets.filter((b)=>{b.x+=b.vx*dt;b.y+=b.vy*dt;if(overlaps({x:b.x,y:b.y,w:8,h:8},player)){hitPlayer();return false;}return b.y<H+20&&b.x>-20&&b.x<W+20;});
-      enemies.forEach((e)=>{e.y+=(18+game.wave*1.5)*dt;e.x+=(e.vx+Math.sin(waveClock*2+e.phase)*(e.type==="swarm"?28:9))*dt;if(e.x<e.w/2||e.x>W-e.w/2)e.vx*=-1;if(overlaps(e,player))hitPlayer();if(e.y>H+25)e.y=-20;});
-      for(let i=playerBullets.length-1;i>=0;i-=1){for(let j=enemies.length-1;j>=0;j-=1){const b=playerBullets[i],e=enemies[j];if(b&&overlaps({x:b.x,y:b.y,w:7,h:14},e)){playerBullets.splice(i,1);e.hp-=1;if(e.hp<=0){game.score+=e.type==="tank"?80:e.type==="swarm"?12:28;addParticles(e.x,e.y,e.type==="tank"?"#ffc86b":"#6e8cff",12);enemies.splice(j,1);}break;}}}
-      enemyFireClock-=dt;if(enemyFireClock<=0&&enemies.length){enemyShoot();enemyFireClock=Math.max(.72,1.9);}waveClock+=dt;if(!enemies.length&&waveActive)nextWave();
-      simElapsedMs+=dt*1000;if(performance.now()>=nextRequestAt)requestDecision();
+    function update(now) {
+      const frameDelta = Math.max(0, now - lastFrame);
+      lastFrame = now;
+      if (paused || game.terminal || runState && runState.ending) return;
+      if (frameDelta > MAX_LAG_MS) {
+        invalidateQualification("scheduling_lag");
+        enqueueEvents([{ type:"scheduling_lag", tick:game.tick, wall_ms:wallMs(), frame_delta_ms:frameDelta }]);
+        game.terminal = { reason:"timing_invalid", tick:game.tick, sim_ms:game.sim_ms, lives:game.player.lives, wave:game.wave, score:game.score };
+        endRun("timing_invalid");
+        return;
+      }
+      accumulatorMs += frameDelta;
+      let steps = 0;
+      while (accumulatorMs >= FIXED_DT_MS && steps < MAX_CATCHUP_STEPS && !game.terminal) {
+        if (autopilot) processTick();
+        else updateManual(FIXED_DT_MS / 1000);
+        accumulatorMs -= FIXED_DT_MS;
+        steps += 1;
+      }
+      if (steps >= MAX_CATCHUP_STEPS && accumulatorMs > MAX_LAG_MS) {
+        invalidateQualification("catchup_lag");
+        game.terminal = { reason:"timing_invalid", tick:game.tick, sim_ms:game.sim_ms, lives:game.player.lives, wave:game.wave, score:game.score };
+        endRun("timing_invalid");
+      }
+      stars.forEach((star) => {
+        star.y += star.speed * frameDelta / 1000;
+        if (star.y > H) { star.y = 0; star.x = random(0, W); }
+      });
     }
 
-    function updatePanel(now=performance.now()) {
-      $("hud-wave").textContent=game.wave;$("hud-score").textContent=game.score.toLocaleString();$("hud-lives").textContent="♥".repeat(Math.max(0,game.lives))+"♡".repeat(Math.max(0,3-game.lives));$("hud-run").textContent=runId;$("hud-elapsed").textContent=(simElapsedMs/1000).toFixed(1)+" s";$("hud-mode").textContent=gameOver?"ENDED":paused?"PAUSED":autopilot?"AUTO":"MANUAL";
-      $("selected").textContent=lastSelected;$("executed").textContent=lastExecuted;$("override").textContent=lastOverride;
-      const safe=lastCandidates.filter((c)=>c.safe),contacts=lastCandidates.filter((c)=>c.inBounds&&c.collisionTime!==null).map((c)=>c.collisionTime);const earliest=contacts.length?Math.min(...contacts):null;$("safety").textContent=`${safe.length}/9 eligible · ${earliest===null?"none within 0.6 s":`first contact ${earliest.toFixed(3)} s`}${safe.length?"":" · no safe candidate"}`;
-      $("request-status").textContent=controller.pending?`pending · E${controller.pending.epoch}/S${controller.pending.sequence}`:`idle · E${controller.epoch}`;
-      $("candidate-grid").innerHTML=lastCandidates.map((c)=>`<div class="candidate ${!c.inBounds?"bound":c.safe?"safe":"risk"}"><b>${c.id}</b><small>${!c.inBounds?"arena bound":c.safe?`safe · ${c.clearance===null?"clear":c.clearance.toFixed(0)+" px"}`:`contact ${c.collisionTime.toFixed(2)} s`}</small></div>`).join("");
-      $("metric-latency").textContent=Number.isFinite(lastApi.latency_ms)?lastApi.latency_ms.toFixed(1):"—";$("metric-token-rate").textContent=Number.isFinite(lastApi.api_token_throughput)?lastApi.api_token_throughput.toFixed(1):"—";$("metric-completed-rate").textContent=core.rollingCompletedRate(completionEvents,now,10000).toFixed(2);$("metric-usage").textContent=`${lastApi.usage?.input_tokens??"—"} / ${lastApi.usage?.output_tokens??"—"}`;$("metric-calls").textContent=callCount;$("metric-failures").textContent=failureCount;$("metric-accepted").textContent=controller.acceptedCount;$("metric-applied").textContent=controller.jevExecutedCount;
+    function updatePanel(now = performance.now()) {
+      const observation = lastObservation || currentObservation();
+      $("hud-wave").textContent = game.wave;
+      $("hud-score").textContent = game.score.toLocaleString();
+      $("hud-lives").textContent = "♥".repeat(Math.max(0, game.player.lives)) + "♡".repeat(Math.max(0, 3 - game.player.lives));
+      $("hud-run").textContent = runId || "starting";
+      $("hud-elapsed").textContent = (game.sim_ms / 1000).toFixed(1) + " s";
+      $("hud-mode").textContent = game.terminal ? "ENDED" : paused ? "PAUSED" : autopilot ? "AUTO" : "MANUAL";
+      $("selected").textContent = lastSelected;
+      $("executed").textContent = currentExecutingText();
+      $("request-status").textContent = controller.pending ? `pending · E${controller.epoch}/S${controller.pending.sequence}` : `idle · E${controller.epoch}`;
+      $("neutral-reason").textContent = game.terminal ? "ended · no active command" : controller.active ? "not neutral" : controller.lastNeutralReason;
+      $("trace-path").textContent = tracePath;
+      $("qualification").textContent = qualification.valid ? qualification.reason : `invalid · ${qualification.reason}`;
+
+      const candidates = observation.forecast.candidates;
+      $("candidate-grid").innerHTML = candidates.map((candidate) => {
+        const medium = candidate.medium;
+        const contact = medium.contact_ms === null ? "no contact" : `contact ${medium.contact_ms} ms`;
+        const enemyClearance = `enemy ${medium.enemy_clearance_px ?? "none"} px`;
+        const cls = medium.wall_clamped ? "bound" : medium.contact_ms === null ? "clear" : "risk";
+        return `<div class="candidate ${cls}"><b>${candidate.id}</b><small>M ${medium.room_px.toFixed(0)}px room</small><small>${contact}</small><small>${enemyClearance}</small></div>`;
+      }).join("");
+
+      const stats = djev.latencyStats(controller);
+      const completedRate = completionEvents.filter((at) => at > wallMs() - 10000).length / 10;
+      $("metric-latency").textContent = stats.expected_delay_ms.toFixed(1);
+      $("metric-token-rate").textContent = Number.isFinite(lastApi.api_token_throughput) ? lastApi.api_token_throughput.toFixed(1) : "—";
+      $("metric-completed-rate").textContent = completedRate.toFixed(2);
+      $("metric-usage").textContent = `${lastApi.usage?.input_tokens ?? "—"} / ${lastApi.usage?.output_tokens ?? "—"}`;
+      $("metric-calls").textContent = controller.counters.completed;
+      $("metric-failures").textContent = controller.counters.failures;
+      $("metric-accepted").textContent = controller.counters.accepted;
+      $("metric-applied").textContent = controller.counters.applied;
     }
 
     function draw() {
-      const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#07152c");g.addColorStop(1,"#020711");ctx.fillStyle=g;ctx.fillRect(0,0,W,H);stars.forEach((s)=>{ctx.globalAlpha=s.alpha;ctx.fillStyle="#c6dcff";ctx.fillRect(s.x,s.y,s.size,s.size);});ctx.globalAlpha=1;
-      ctx.strokeStyle="rgba(100,155,228,.08)";for(let x=0;x<W;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}for(let y=0;y<H;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
-      playerBullets.forEach((b)=>{ctx.fillStyle="#e8f1ff";ctx.beginPath();ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);ctx.fill();});enemyBullets.forEach((b)=>{ctx.fillStyle=b.sweep?"#ffc86b":"#ff7086";ctx.beginPath();ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);ctx.fill();});
-      enemies.forEach((e)=>{ctx.save();ctx.translate(e.x,e.y);ctx.fillStyle=e.type==="tank"?"#ffc86b":e.type==="swarm"?"#c47bff":"#6e8cff";ctx.fillRect(-e.w/2,-e.h/2,e.w,e.h);ctx.restore();});
-      if(!(player.invincible>0&&Math.floor(player.invincible*12)%2===0)){ctx.save();ctx.translate(player.x,player.y);ctx.fillStyle="#5ce1e6";ctx.beginPath();ctx.moveTo(0,-13);ctx.lineTo(11,8);ctx.lineTo(0,5);ctx.lineTo(-11,8);ctx.closePath();ctx.fill();ctx.restore();}
-      particles.forEach((p)=>{ctx.globalAlpha=Math.max(0,p.life/p.maxLife);ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,3,3);});ctx.globalAlpha=1;
-      if(paused||gameOver){ctx.fillStyle="rgba(2,7,17,.68)";ctx.fillRect(0,0,W,H);ctx.textAlign="center";ctx.fillStyle="#e8f1ff";ctx.font="800 28px Inter,sans-serif";ctx.fillText(gameOver?"Run ended":"Paused",W/2,H/2);ctx.textAlign="left";}
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, "#07152c");
+      g.addColorStop(1, "#020711");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+      stars.forEach((star) => { ctx.globalAlpha = star.alpha; ctx.fillStyle = "#c6dcff"; ctx.fillRect(star.x, star.y, star.size, star.size); });
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "rgba(100,155,228,.08)";
+      for (let x = 0; x < W; x += 80) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+      for (let y = 0; y < H; y += 80) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+      game.playerBullets.forEach((shot) => { ctx.fillStyle = "#e8f1ff"; ctx.beginPath(); ctx.arc(shot.x, shot.y, shot.radius, 0, Math.PI * 2); ctx.fill(); });
+      game.enemyBullets.forEach((shot) => { ctx.fillStyle = shot.fast ? "#ffffff" : shot.sweep ? "#ffc86b" : "#ff7086"; ctx.beginPath(); ctx.arc(shot.x, shot.y, shot.radius, 0, Math.PI * 2); ctx.fill(); if (shot.fast) { ctx.strokeStyle = "#5ce1e6"; ctx.stroke(); } });
+      game.enemies.forEach((enemy) => { ctx.save(); ctx.translate(enemy.x, enemy.y); ctx.fillStyle = enemy.type === "tank" ? "#ffc86b" : enemy.type === "swarm" ? "#c47bff" : "#6e8cff"; ctx.fillRect(-enemy.w / 2, -enemy.h / 2, enemy.w, enemy.h); ctx.restore(); });
+      if (!(game.player.invincible_s > 0 && Math.floor(game.player.invincible_s * 12) % 2 === 0)) {
+        ctx.save();
+        ctx.translate(game.player.x, game.player.y);
+        ctx.fillStyle = "#5ce1e6";
+        ctx.beginPath();
+        ctx.moveTo(0, -13);
+        ctx.lineTo(11, 8);
+        ctx.lineTo(0, 5);
+        ctx.lineTo(-11, 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      if (paused || game.terminal) {
+        ctx.fillStyle = "rgba(2,7,17,.68)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#e8f1ff";
+        ctx.font = "800 28px Inter,sans-serif";
+        ctx.fillText(game.terminal ? `Run ended: ${game.terminal.reason}` : "Paused", W / 2, H / 2);
+        ctx.textAlign = "left";
+      }
     }
 
-    function resetGame() { if(controller.pending?.abortController)controller.pending.abortController.abort();runId=(globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2)).slice(0,8);simElapsedMs=0;game={wave:1,score:0,lives:3,profile:core.waveProfile(1)};controller=core.createLifecycle(controller.epoch+1);autopilot=true;paused=false;gameOver=false;player.x=W/2;player.y=H-70;player.invincible=0;player.cooldown=0;particles=[];history=[];callCount=0;failureCount=0;completionEvents=[];lastSelected="none";lastExecuted="local · hold";lastOverride="none";lastApi={latency_ms:null,api_token_throughput:null,usage:{input_tokens:null,output_tokens:null}};startWave();lastCandidates=core.evaluateCandidates(snapshot(),"hold");nextRequestAt=performance.now();$("autopilot-button").textContent="Auto pilot: ON";$("pause-button").textContent="Pause";addHistory("run",runId); }
-    function frame(now){const dt=Math.min(.034,Math.max(0,(now-lastFrame)/1000));lastFrame=now;update(dt);draw();updatePanel(now);requestAnimationFrame(frame);}
-    function canvasPoint(event){const rect=canvas.getBoundingClientRect(),arena=core.arenaFor(W,H,player.w,player.h);return{x:clamp((event.clientX-rect.left)*W/rect.width,arena.left,arena.right),y:clamp((event.clientY-rect.top)*H/rect.height,arena.top,arena.bottom)};}
-    canvas.addEventListener("pointermove",(event)=>{pointerTarget=canvasPoint(event);});canvas.addEventListener("pointerleave",()=>{pointerTarget=null;});
-    window.addEventListener("keydown",(event)=>{const key=event.key.toLowerCase();if(["arrowleft","arrowright","arrowup","arrowdown","w","a","s","d"," "].includes(key))event.preventDefault();if(key===" ")setPaused(!paused);else keys.add(key);});window.addEventListener("keyup",(event)=>keys.delete(event.key.toLowerCase()));
-    $("autopilot-button").addEventListener("click",()=>{autopilot=!autopilot;pointerTarget=null;invalidate(autopilot?"autopilot_enabled":"manual");$("autopilot-button").textContent=autopilot?"Auto pilot: ON":"Auto pilot: OFF";nextRequestAt=performance.now();});
-    $("pause-button").addEventListener("click",()=>setPaused(!paused));$("restart-button").addEventListener("click",resetGame);
-    resetGame();requestAnimationFrame(frame);
+    async function restartRun(reason = "reset") {
+      if (runState && !runState.ending) {
+        invalidateQualification(reason, runState);
+        endRun("aborted", runState);
+      }
+      const token = ++runToken;
+      runId = null;
+      tracePath = "starting";
+      qualification = { valid:true, reason:"pending trace" };
+      history = [];
+      recentCommands = [];
+      recentHits = [];
+      completionEvents = [];
+      lastApi = { latency_ms:null, api_token_throughput:null, usage:{ input_tokens:null, output_tokens:null } };
+      lastSelected = "none";
+      lastExecuted = "neutral · hold · cease";
+      runStartPerf = performance.now();
+      lastFrame = runStartPerf;
+      accumulatorMs = 0;
+      nextRequestAllowedWallMs = 0;
+      game = core.createGame({ seed:20260920, difficulty });
+      controller = djev.createController({ run_id:null, epoch:1 });
+      const run = {
+        token, game, controller, startedPerf:runStartPerf, id:null, qualification,
+        traceQueue:[], flushPromise:null, retryTimer:null, nextEventId:1,
+        startPromise:null, decisionPromise:null, finalization:null, ending:null, complete:false,
+      };
+      runState = run;
+      controller.lastNeutralReason = "startup";
+      paused = false;
+      autopilot = true;
+      $("autopilot-button").textContent = "Auto pilot: ON";
+      $("pause-button").textContent = "Pause";
+      syncDifficultyControls();
+      lastObservation = currentObservation();
+      addHistory("run", "starting trace");
+      $("http-warning").classList.toggle("show", isFileProtocol);
+      if (isFileProtocol) {
+        runId = null;
+        tracePath = "file URL";
+        $("hud-run").textContent = "file URL";
+        $("trace-path").textContent = "serve via HTTP";
+        invalidateQualification("file_url_no_bridge");
+        return;
+      }
+      try {
+        const hash = await engineSourceHash();
+        if (!isCurrentRun(run)) return;
+        run.startPromise = startTrace({
+          seed:20260920,
+          profile:"custom",
+          difficulty:{ ...run.game.difficulty },
+          engine_version:core.ENGINE_VERSION,
+          engine_hash:hash,
+          dt_ms:core.DT_MS,
+          prompt_version:djev.PROMPT_VERSION,
+          context_version:djev.CONTEXT_VERSION,
+          mode:"browser",
+          rules:core.rulesManifest(),
+        }, run);
+        await run.startPromise;
+        if (!isCurrentRun(run) || run.ending) return;
+        maybeBeginDecision();
+      } catch (error) {
+        invalidateQualification("engine_hash_failed", run);
+      }
+    }
+
+    function setPaused(value) {
+      if (paused === value) return;
+      paused = value;
+      invalidateQualification(value ? "paused" : "resumed");
+      const result = djev.invalidateController(controller, value ? "paused" : "resume");
+      updateRecentFromEvents(result.events);
+      enqueueEvents(result.events);
+      $("pause-button").textContent = paused ? "Resume" : "Pause";
+    }
+
+    function frame(now) {
+      update(now);
+      draw();
+      updatePanel(now);
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      if (["arrowleft","arrowright","arrowup","arrowdown","w","a","s","d"," "].includes(key)) event.preventDefault();
+      if (key === " ") setPaused(!paused);
+      else keys.add(key);
+    });
+    window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+    $("autopilot-button").addEventListener("click", () => {
+      autopilot = !autopilot;
+      invalidateQualification(autopilot ? "autopilot_enabled" : "manual");
+      const result = djev.invalidateController(controller, autopilot ? "autopilot_enabled" : "manual");
+      updateRecentFromEvents(result.events);
+      enqueueEvents(result.events);
+      $("autopilot-button").textContent = autopilot ? "Auto pilot: ON" : "Auto pilot: OFF";
+    });
+    $("pause-button").addEventListener("click", () => setPaused(!paused));
+    $("restart-button").addEventListener("click", () => { invalidateQualification("reset"); restartRun(); });
+    ["bullet-density","enemy-density","fast-bullet-ratio","fast-bullet-speed"].forEach((id) => $(id).addEventListener("input", readDifficultyControls));
+
+    syncDifficultyControls();
+    restartRun();
+    requestAnimationFrame(frame);
   })();
   </script>
 </body>

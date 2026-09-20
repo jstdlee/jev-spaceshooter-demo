@@ -1,233 +1,979 @@
-const { readFileSync } = require('node:fs');
-const { join } = require('node:path');
-const vm = require('node:vm');
 const assert = require('node:assert/strict');
+const { join } = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
-const html = readFileSync(join(__dirname, 'space-shooter.html'), 'utf8');
-const match = html.match(/<script id="space-decision-core">([\s\S]*?)<\/script>/);
-assert.ok(match, 'inline production core must exist');
-const sandbox = {};
-vm.createContext(sandbox);
-vm.runInContext(match[1], sandbox);
-const core = sandbox.SpaceDecisionCore;
-assert.ok(core, 'inline core must export SpaceDecisionCore');
+const {
+  HARDEST_PROFILE,
+  buildManifest,
+  hashSourcePair,
+  loadSpaceModulesFromHtml,
+} = require('./benchmark.cjs');
 
-const player = (x = 480, y = 420) => ({ x, y, w: 20, h: 18 });
-const bullet = (x, y, vx = 0, vy = 0) => ({ x, y, vx, vy, w: 8, h: 8, kind: 'bullet' });
-const snapshot = ({ x = 480, y = 420, bullets = [], enemies = [], width = 960, height = 620 } = {}) => ({
-  width, height, player: player(x, y), bullets, enemies, waveProfile: core.waveProfile(1),
-});
-const near = (actual, expected, tolerance = 1e-7) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
+const htmlPath = join(__dirname, 'space-shooter.html');
 
-test('receding and parallel non-overlapping threats do not fabricate contact', () => {
-  const segment = { t0: 0, t1: 0.6, p0: { x: 480, y: 420 }, p1: { x: 480, y: 420 } };
-  assert.equal(core.sweptContact(segment, bullet(480, 470, 0, 170), { x: 14, y: 13 }), null);
-  assert.equal(core.sweptContact(segment, bullet(480, 420, 0, 170), { x: 14, y: 13 }), 0);
-  assert.equal(core.sweptContact(segment, bullet(520, 420, 0, 0), { x: 14, y: 13 }), null);
-});
+function loadModules() {
+  return loadSpaceModulesFromHtml(htmlPath);
+}
 
-test('time-aligned sweep catches a moving crossing and rejects a late geometric crossing', () => {
-  const moving = core.planAction(player(400, 400), 'right', 240, 600, core.arenaFor(960, 620, 20, 18));
-  const contact = core.sweptContact(moving.segments[0], bullet(416.8, 330, 0, 70 / 0.15), { x: 14, y: 13 });
-  assert.ok(contact >= 0.12 && contact <= 0.18, `contact=${contact}`);
-  assert.equal(core.sweptContact(moving.segments[0], bullet(416.8, 260, 0, 70 / 0.5), { x: 14, y: 13 }), null);
-});
+function makeManifest(engineHash = '0'.repeat(64)) {
+  return buildManifest({
+    seed: 20260920,
+    profile: 'hardest',
+    difficulty: HARDEST_PROFILE,
+    engineHash,
+    engineVersion: 'test-engine',
+    mode: 'cli',
+  });
+}
 
-test('stopped tail is evaluated, boundary touch is contact, and zero-axis velocity works', () => {
-  const planned = core.planAction(player(400, 400), 'right', 240, 600, core.arenaFor(960, 620, 20, 18));
-  const endpoint = planned.endpoint;
-  const hitsTail = bullet(endpoint.x, 300, 0, (endpoint.y - 13 - 300) / 0.4);
-  const contacts = planned.segments.map((s) => core.sweptContact(s, hitsTail, { x: 14, y: 13 })).filter((x) => x !== null);
-  assert.ok(contacts.some((x) => x >= 0.39 && x <= 0.401));
-  assert.equal(core.sweptContact(planned.segments[0], bullet(414, 400), { x: 14, y: 13 }), 0);
-  assert.equal(core.sweptContact(planned.segments[0], bullet(400, 450, 112, 0), { x: 14, y: 13 }), null);
-});
+function makeState(tick = 0) {
+  return {
+    tick,
+    sim_ms: tick * (1000 / 60),
+    wave: 1,
+    difficulty: HARDEST_PROFILE,
+    player: { x: 480, y: 540, w: 20, h: 18, lives: 3, cooldown_ms: 0, invulnerability_ms: 0 },
+    active_command: null,
+    enemy_fire_in_ms: 237.5,
+    threat_counts: { enemies: 1, bullets: 1, shown: 2, total: 2 },
+    nearest_threats: [
+      { kind: 'bullet', x: 480, y: 520, vx: 0, vy: 169, w: 8, h: 8 },
+      { kind: 'enemy', x: 480, y: 100, vx: 0, vy: 20, w: 32, h: 24 },
+    ],
+    recent_commands: [],
+    recent_hits: [],
+  };
+}
 
-test('all active threats are considered without dilution or truncation', () => {
-  const danger = bullet(480, 360, 0, 120);
-  const harmless = Array.from({ length: 12 }, (_, i) => bullet(40 + i * 25, 40, -10, 0));
-  const candidate = (items) => core.evaluateCandidates(snapshot({ bullets: items }), 'hold').find((c) => c.id === 'hold');
-  const one = candidate([danger]);
-  const seven = candidate(harmless.slice(0, 7).concat(danger));
-  const manyBefore = candidate(harmless.concat(danger));
-  assert.notEqual(one.collisionTime, null);
-  near(seven.collisionTime, one.collisionTime);
-  near(manyBefore.collisionTime, one.collisionTime);
-  assert.ok(seven.clearance <= one.clearance && manyBefore.clearance <= one.clearance);
-});
+function makeForecast(core) {
+  return {
+    expected_delay_ms: 259,
+    latency_samples: 1,
+    latency_spread_ms: 0,
+    horizon_ms: 759,
+    prefix: { authorized_remaining_ms: 120, contact_ms: 80 },
+    assumptions: { enemy_motion: 'current_linear', future_spawns_included: false },
+    candidates: core.ACTION_IDS.map((id) => ({
+      id,
+      short: {
+        endpoint: { x: 480, y: 540 },
+        contact_ms: id === 'down' ? 0 : null,
+        clearance_px: id === 'down' ? 0 : 22,
+        edge_distances_px: { left: 470, right: 470, top: 531, bottom: 62 },
+        shot_eta_ms: id === 'hold' ? 300 : null,
+      },
+      medium: {
+        endpoint: { x: 480, y: 540 },
+        contact_ms: id === 'down' ? 0 : null,
+        clearance_px: id === 'down' ? 0 : 18,
+        edge_distances_px: { left: 470, right: 470, top: 531, bottom: 62 },
+        shot_eta_ms: id === 'hold' ? 300 : null,
+      },
+    })),
+  };
+}
 
-test('safety gate permits emergency escape beyond the old preferred corridor', () => {
-  const s = snapshot({ x: 246, y: 420, bullets: [bullet(274, 420, -40, 0), bullet(246, 380, 0, 100), bullet(246, 460, 0, -100)] });
-  const chosen = core.chooseFallback(core.evaluateCandidates(s, 'hold'));
-  assert.equal(chosen.id, 'left');
-  assert.ok(chosen.endpoint.x < 250);
-  assert.ok(chosen.endpoint.x >= core.arenaFor(960, 620, 20, 18).left);
-  assert.equal(chosen.collisionTime, null);
-});
+function begin(controllerApi, controller, core, tick = 0) {
+  const request = controllerApi.beginDecision(controller, {
+    tick,
+    wall_ms: tick * (1000 / 60),
+    state: makeState(tick),
+    forecast: makeForecast(core),
+    checkpoint: { tick, state_hash: `checkpoint-${tick}` },
+  });
+  assert.equal(request.schema_version, 1);
+  assert.ok(Number.isInteger(request.sequence));
+  return request;
+}
 
-test('room and continuity yield deterministic stable local choices', () => {
-  assert.equal(core.chooseFallback(core.evaluateCandidates(snapshot({ x: 20, y: 20 }), 'hold')).id, 'down_right');
-  assert.equal(core.chooseFallback(core.evaluateCandidates(snapshot({ x: 480, y: 620 * 0.68 }), 'hold')).id, 'hold');
-  assert.equal(core.chooseFallback(core.evaluateCandidates(snapshot({ x: 480, y: 620 * 0.68 }), 'left')).id, 'left');
-  let prior = 'hold';
-  for (let i = 0; i < 20; i += 1) {
-    const selected = core.chooseFallback(core.evaluateCandidates(snapshot({ x: 480, y: 620 * 0.68 }), prior));
-    assert.equal(selected.id, 'hold');
-    prior = selected.id;
-  }
-});
+function validReply(request, overrides = {}) {
+  return {
+    schema_version: 1,
+    run_id: request.run_id,
+    epoch: request.epoch,
+    sequence: request.sequence,
+    decision_id: `decision-${request.sequence}`,
+    movement: 'hold',
+    fire: 'cease',
+    lease: 'short',
+    intent: 'position',
+    valid_choice: true,
+    api_ok: true,
+    confidence: { movement: 0.5, fire: 0.5, lease: 0.5, intent: 0.5 },
+    ...overrides,
+  };
+}
 
-test('no-threat fallback converges toward center from the far upper-left arena', () => {
-  const far = snapshot({ x: 120, y: 200 });
-  const selected = core.chooseFallback(core.evaluateCandidates(far, 'hold'));
-  assert.equal(selected.id, 'down_right');
-  const before = Math.hypot(far.player.x - 480, far.player.y - 620 * 0.68);
-  const planned = core.planAction(far.player, selected.id, 240, 600, core.arenaFor(960, 620, 20, 18));
-  const after = Math.hypot(planned.endpoint.x - 480, planned.endpoint.y - 620 * 0.68);
-  assert.ok(after < before);
-});
+function finish(controllerApi, controller, request, wall_ms) {
+  controllerApi.finishDecision(controller, { sequence: request.sequence, wall_ms });
+}
 
-test('all-unsafe state reports best effort without claiming safety', () => {
-  const blockers = [bullet(480, 420), bullet(450, 420), bullet(510, 420), bullet(480, 390), bullet(480, 450), bullet(450, 390), bullet(510, 390), bullet(450, 450), bullet(510, 450)];
-  const candidates = core.evaluateCandidates(snapshot({ bullets: blockers }), 'hold');
-  const picked = core.chooseFallback(candidates);
-  assert.equal(picked.no_safe_candidate, true);
-  assert.notEqual(picked.collisionTime, null);
-  assert.equal(core.shouldRequestModel(candidates), false);
-});
+function ruleValue(rules, path, fallbackPath = []) {
+  const read = (segments) => segments.reduce((value, key) => (value == null ? undefined : value[key]), rules);
+  return read(path) ?? read(fallbackPath);
+}
 
-test('accepted model choice has direct bounded displacement even when soft score is worse', () => {
-  for (const [id, sign] of [['left', -1], ['right', 1]]) {
-    const s = snapshot({ x: 480, y: 421.6 });
-    const request = core.makeRequestRecord(core.createLifecycle(4), core.evaluateCandidates(s, 'hold'), 100, {});
-    const accepted = core.acceptReply({ epoch: 4, sequence: request.record.sequence, movement: id, valid_choice: true, api_ok: true }, request.record, request.lifecycle, 200, { running: true, autopilot: true });
-    assert.equal(accepted.event.type, 'selected');
-    const resolved = core.resolveAction(s, accepted.lifecycle, 1000);
-    assert.equal(resolved.execution.id, id);
-    assert.equal(resolved.execution.source, 'jev');
-    const advanced = core.advancePlayer(s.player, resolved.execution, 0.1, core.arenaFor(960, 620, 20, 18), 1000);
-    assert.equal(Math.sign(advanced.displacement.x), sign);
-  }
-});
+function playerShotEvents(events) {
+  return events.filter((event) => event.type === 'shot' && (event.decision_id || event.payload?.decision_id || event.payload?.owner === 'player'));
+}
 
-test('expiry and frame splitting cap model influence to authorized time', () => {
-  const execution = { id: 'right', source: 'jev', expiresAtMs: 1010, startedAtMs: 770 };
-  const result = core.advancePlayer(player(400, 400), execution, 0.034, core.arenaFor(960, 620, 20, 18), 1000);
-  near(result.appliedMs, 10);
-  near(result.unconsumedMs, 24);
-  near(result.displacement.x, 1.12);
-});
+function shotDecisionId(event) {
+  return event.decision_id ?? event.payload?.decision_id ?? null;
+}
 
-test('arrival and mid-command hazards override model choice with explicit reasons', () => {
-  const clear = snapshot({ x: 480, y: 420 });
-  const req = core.makeRequestRecord(core.createLifecycle(2), core.evaluateCandidates(clear, 'hold'), 0, {});
-  const accepted = core.acceptReply({ epoch: 2, sequence: req.record.sequence, movement: 'left', valid_choice: true, api_ok: true }, req.record, req.lifecycle, 10, { running: true, autopilot: true });
-  const changed = snapshot({ x: 480, y: 420, bullets: [bullet(450, 420, 0, 0)] });
-  const arrival = core.resolveAction(changed, accepted.lifecycle, 20);
-  assert.equal(arrival.event.reason, 'unsafe_on_arrival');
-  assert.notEqual(arrival.execution.id, 'left');
-  const activeLife = { ...core.createLifecycle(3), active: { id: 'right', source: 'jev', startedAtMs: 0, expiresAtMs: 240, counted: true } };
-  const mid = core.resolveAction(snapshot({ x: 480, y: 420, bullets: [bullet(510, 420, 0, 0)] }), activeLife, 50);
-  assert.equal(mid.event.reason, 'new_collision');
-  assert.notEqual(mid.execution.id, 'right');
-});
+function near(actual, expected, tolerance, label = 'value') {
+  assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} not within ${tolerance} of ${expected}`);
+}
 
-test('freshness, epoch, sequence, and pending identity gates reject stale replies', () => {
-  const req = core.makeRequestRecord(core.createLifecycle(8), core.evaluateCandidates(snapshot(), 'hold'), 100, {});
-  const reply = { epoch: 8, sequence: req.record.sequence, movement: 'hold', valid_choice: true, api_ok: true };
-  assert.equal(core.validateReply(reply, req.record, req.lifecycle, 700, { running: true, autopilot: true }).ok, true);
-  assert.equal(core.validateReply(reply, req.record, req.lifecycle, 701, { running: true, autopilot: true }).reason, 'age');
-  assert.equal(core.validateReply({ ...reply, epoch: 7 }, req.record, req.lifecycle, 200, { running: true, autopilot: true }).reason, 'stale_epoch');
-  assert.equal(core.validateReply(reply, req.record, { ...req.lifecycle, lastAcceptedSequence: req.record.sequence }, 200, { running: true, autopilot: true }).reason, 'stale_sequence');
-  assert.equal(core.validateReply(reply, req.record, { ...req.lifecycle, pending: {} }, 200, { running: true, autopilot: true }).reason, 'superseded_request');
-  for (const status of [{ running: false, autopilot: true }, { running: true, autopilot: false }]) assert.equal(core.validateReply(reply, req.record, req.lifecycle, 200, status).ok, false);
-});
+function cleanForecastGame(core, overrides = {}) {
+  const game = core.createGame(makeManifest());
+  game.enemies = [];
+  game.enemyBullets = [];
+  game.playerBullets = [];
+  game.enemyFireClock_s = 99;
+  game.player.x = overrides.x ?? 200;
+  game.player.y = overrides.y ?? 300;
+  game.player.cooldown_s = overrides.cooldown_s ?? 0;
+  game.player.invincible_s = overrides.invincible_s ?? 0;
+  return game;
+}
 
-test('queued model choice is rechecked against wall-clock age before simulation execution', () => {
-  const s = snapshot();
-  const req = core.makeRequestRecord(core.createLifecycle(9), core.evaluateCandidates(s, 'hold'), 100, {});
-  const accepted = core.acceptReply({ epoch: 9, sequence: req.record.sequence, movement: 'left', valid_choice: true, api_ok: true }, req.record, req.lifecycle, 200, { running: true, autopilot: true });
-  const resolved = core.resolveAction(s, accepted.lifecycle, 50, 701);
-  assert.equal(resolved.execution.source, 'local');
-  assert.equal(resolved.event.reason, 'age');
-  assert.equal(resolved.event.selected, 'left');
-});
+function observeForForecast(core, game, context = {}) {
+  return core.observeGame(game, {
+    expected_delay_ms: context.expected_delay_ms ?? 100,
+    latency_samples: 0,
+    latency_spread_ms: 0,
+    active_command: null,
+    recent_commands: [],
+    recent_hits: [],
+    ...context,
+  });
+}
 
-test('invalidation clears commands and old callbacks cannot clear newer pending work', () => {
-  const req1 = { epoch: 1, sequence: 1 };
-  const req2 = { epoch: 1, sequence: 2 };
-  const life = { ...core.createLifecycle(1), pending: req2, queued: { id: 'left' }, active: { id: 'left' }, executedCount: 0 };
-  assert.equal(core.clearPendingIfCurrent(life, req1).pending, req2);
-  assert.equal(core.clearPendingIfCurrent(life, req2).pending, null);
-  const invalid = core.invalidateLifecycle(life, 'manual');
-  assert.equal(invalid.epoch, 2);
-  assert.equal(invalid.pending, null);
-  assert.equal(invalid.queued, null);
-  assert.equal(invalid.active, null);
-  assert.equal(invalid.executedCount, 0);
-});
+function candidate(observed, id) {
+  const found = observed.forecast.candidates.find((item) => item.id === id);
+  assert.ok(found, `missing candidate ${id}`);
+  return found;
+}
 
-test('accepted but unapplied does not count; local fallback runs while request is pending', () => {
-  const req = core.makeRequestRecord(core.createLifecycle(1), core.evaluateCandidates(snapshot(), 'hold'), 0, {});
-  const accepted = core.acceptReply({ epoch: 1, sequence: req.record.sequence, movement: 'left', valid_choice: true, api_ok: true }, req.record, req.lifecycle, 1, { running: true, autopilot: true });
-  assert.equal(accepted.lifecycle.executedCount, 0);
-  assert.equal(core.resolveAction(snapshot(), req.lifecycle, 50).execution.source, 'local');
-});
+function bullet({ id, x = 200, y = 300, vx = 0, vy = 0 }) {
+  return { id, x, y, vx, vy, radius: 4, fast: false, from_enemy_id: 'fixture-enemy' };
+}
 
-test('wave profile and progression are independent of model selections and failures', () => {
-  const first = core.waveProfile(1);
-  assert.equal(first.difficulty, 'normal');
-  assert.equal(core.waveProfile(1).enemyType, 'scout');
-  assert.equal(core.waveProfile(2).enemyType, 'swarm');
-  assert.equal(core.waveProfile(3).enemyType, 'tank');
-  assert.equal(core.waveProfile(4).enemyType, first.enemyType);
-  const a = core.nextWaveState({ wave: 1, profile: first }, { movement: 'left' });
-  const b = core.nextWaveState({ wave: 1, profile: first }, { api_ok: false });
-  assert.equal(a.wave, 2);
-  assert.equal(b.wave, 2);
-  assert.equal(a.profile.enemyType, b.profile.enemyType);
-});
+function scoutEnemy({ id = 'enemy-fixture', x = 260, y = 300 }) {
+  return { id, type: 'scout', x, y, vx: 0, phase: 0, w: 32, h: 24, hp: 2, maxHp: 2 };
+}
 
-test('rolling completion rate is measured over completed request events, not reciprocal latency', () => {
-  near(core.rollingCompletedRate([0, 3000, 9000, 10001], 10001, 10000), 0.3);
-});
-
-test('restart restores the visible auto-pilot label after manual takeover', () => {
-  const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
-  assert.equal(scripts.length, 2);
+// Exercise the actual adapter with a stub DOM and no bootstrap or animation.
+// Lifecycle tests supply mocked transport; no test can reach a real HTTP service.
+function loadBrowserAdapter(modules, game, controller, options = {}) {
   const elements = new Map();
-  const makeElement = (id) => {
-    const listeners = {};
-    const element = {
-      id, textContent: '', innerHTML: '', listeners,
-      addEventListener(type, handler) { listeners[type] = handler; },
-    };
-    if (id === 'game') Object.assign(element, {
-      width: 960, height: 620,
-      getContext() { return {}; },
-      getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 620 }; },
+  const element = (id) => {
+    if (!elements.has(id)) elements.set(id, {
+      textContent: '', innerHTML: '', width: 960, height: 620,
+      getContext: () => ({}), addEventListener() {}, classList: { toggle() {} },
     });
-    return element;
+    return elements.get(id);
   };
-  const ui = {
-    document: { getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement(id)); return elements.get(id); } },
-    performance: { now: () => 1000 },
-    crypto: { randomUUID: () => 'test-run-id' },
-    requestAnimationFrame() {},
-    addEventListener() {},
-    setTimeout() { return 1; },
-    clearTimeout() {},
+  const sandbox = {
+    SpaceDecisionCore: modules.core,
+    SpaceDjevController: modules.controller,
+    document: { getElementById: element },
+    window: { addEventListener() {} },
+    location: { protocol: options.fetch ? 'http:' : 'file:' },
+    performance: { now: () => options.clock?.now ?? 100 },
+    fetch: options.fetch || (() => { throw new Error('browser unit tests must never call HTTP'); }),
+    TextEncoder, AbortController,
+    crypto: require('node:crypto').webcrypto,
+    setTimeout: (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      options.t?.after(() => clearTimeout(timer));
+      return timer;
+    },
+    clearTimeout,
+    requestAnimationFrame() { throw new Error('browser unit tests must never start animation'); },
+    fixtureGame: game, fixtureController: controller,
   };
-  ui.window = ui;
-  vm.createContext(ui);
-  vm.runInContext(scripts[0][1], ui);
-  vm.runInContext(scripts[1][1], ui);
-  const autoButton = elements.get('autopilot-button');
-  const restartButton = elements.get('restart-button');
-  assert.equal(autoButton.textContent, 'Auto pilot: ON');
-  autoButton.listeners.click();
-  assert.equal(autoButton.textContent, 'Auto pilot: OFF');
-  restartButton.listeners.click();
-  assert.equal(autoButton.textContent, 'Auto pilot: ON');
+  const adapterScript = modules.html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
+  const bootstrap = /    syncDifficultyControls\(\);\s*restartRun\(\);\s*requestAnimationFrame\(frame\);\s*\}\)\(\);\s*$/;
+  assert.ok(bootstrap.test(adapterScript), 'adapter bootstrap must be excluded from this offline harness');
+  vm.runInNewContext(adapterScript.replace(bootstrap, `
+    game = fixtureGame;
+    controller = fixtureController;
+    runStartPerf = 0;
+    globalThis.adapter = {
+      currentObservation, updateRecentFromEvents, updatePanel, setPaused,
+      restartRun, maybeBeginDecision, endRun, processTick, enqueueEvents, drainTrace,
+      getState: () => ({ game, controller, runId, qualification, lastApi,
+        completionEvents, history, nextRequestAllowedWallMs }),
+    };
+  })();`), sandbox);
+  element('space-decision-core').textContent = modules.coreScript;
+  element('space-djev-controller').textContent = modules.controllerScript;
+  return { adapter: sandbox.adapter, element };
+}
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+const jsonResponse = (body) => ({ ok: true, json: async () => body });
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+async function waitUntil(predicate) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail('mock browser work did not settle');
+}
+
+function browserTransport() {
+  const calls = [];
+  let starts = 0;
+  const transport = {
+    calls, deferStarts: false, deferEvents: false, deferEnds: false,
+    fetch: (route, init) => {
+      const call = { route, body: JSON.parse(init.body), ...deferred() };
+      calls.push(call);
+      if (route === '/api/run/start') {
+        const run_id = `browser-run-${++starts}`;
+        if (!transport.deferStarts) call.resolve(jsonResponse({ schema_version: 1, run_id, trace_path: `runs/${run_id}` }));
+      } else if (route === '/api/run/event') {
+        if (!transport.deferEvents) call.resolve(jsonResponse({ schema_version: 1, run_id: call.body.run_id, acked_event_id: call.body.events.at(-1).event_id }));
+      } else if (route === '/api/run/end') {
+        if (!transport.deferEnds) call.resolve(jsonResponse({ schema_version: 1, run_id: call.body.run_id, complete: true }));
+      } else assert.equal(route, '/api/decision');
+      return call.promise;
+    },
+    decisions: () => calls.filter((call) => call.route === '/api/decision'),
+    ends: () => calls.filter((call) => call.route === '/api/run/end'),
+    events: (runId) => calls.filter((call) => call.route === '/api/run/event' && call.body.run_id === runId).flatMap((call) => call.body.events),
+    accept: (call) => call.resolve(jsonResponse(validReply(call.body))),
+  };
+  return transport;
+}
+
+test('run integrity shows recording only after the start acknowledgement', async (t) => {
+  const bridge = browserTransport();
+  bridge.deferStarts = true;
+  const { adapter, element } = loadBrowserAdapter(loadModules(), null, null, { fetch: bridge.fetch, clock: { now: 0 }, t });
+  const starting = adapter.restartRun();
+  await waitUntil(() => bridge.calls.some((call) => call.route === '/api/run/start'));
+  adapter.updatePanel();
+  assert.equal(element('qualification').textContent, 'pending trace');
+  bridge.calls.find((call) => call.route === '/api/run/start').resolve(jsonResponse({ schema_version: 1, run_id: 'integrity-start', trace_path: 'test-trace' }));
+  await starting;
+  adapter.updatePanel();
+  assert.equal(element('qualification').textContent, 'recording');
+  bridge.accept(bridge.decisions()[0]);
+  await waitUntil(() => !adapter.getState().controller.pending);
+  await adapter.endRun('aborted');
+});
+
+test('run integrity reports the ending reason only after a complete end acknowledgement', async (t) => {
+  const bridge = browserTransport();
+  bridge.deferEnds = true;
+  const { adapter, element } = loadBrowserAdapter(loadModules(), null, null, { fetch: bridge.fetch, clock: { now: 0 }, t });
+  await adapter.restartRun();
+  bridge.accept(bridge.decisions()[0]);
+  await waitUntil(() => !adapter.getState().controller.pending);
+  const ending = adapter.endRun('death');
+  await waitUntil(() => bridge.ends().length === 1);
+  adapter.updatePanel();
+  assert.notEqual(element('qualification').textContent, 'trace complete · death');
+  const end = bridge.ends()[0];
+  end.resolve(jsonResponse({ schema_version: 1, run_id: end.body.run_id, complete: true }));
+  await ending;
+  adapter.updatePanel();
+  assert.equal(element('qualification').textContent, 'trace complete · death');
+});
+
+for (const pauseAt of ['before_start_ack', 'after_start_ack']) {
+  test(`run integrity preserves invalid reasons through start and end acknowledgements (${pauseAt})`, async (t) => {
+    const bridge = browserTransport();
+    bridge.deferStarts = true;
+    const { adapter, element } = loadBrowserAdapter(loadModules(), null, null, { fetch: bridge.fetch, clock: { now: 0 }, t });
+    const starting = adapter.restartRun();
+    await waitUntil(() => bridge.calls.some((call) => call.route === '/api/run/start'));
+    if (pauseAt === 'before_start_ack') adapter.setPaused(true);
+    bridge.calls.find((call) => call.route === '/api/run/start').resolve(jsonResponse({ schema_version: 1, run_id: 'integrity-invalid', trace_path: 'test-trace' }));
+    await starting;
+    if (pauseAt === 'after_start_ack') {
+      bridge.accept(bridge.decisions()[0]);
+      await waitUntil(() => !adapter.getState().controller.pending);
+      adapter.setPaused(true);
+    }
+    adapter.updatePanel();
+    assert.equal(element('qualification').textContent, 'invalid · paused');
+    await adapter.endRun('aborted');
+    adapter.updatePanel();
+    assert.equal(element('qualification').textContent, 'invalid · paused');
+    assert.deepEqual(bridge.ends()[0].body.terminal.qualification_violations, ['paused']);
+  });
+}
+
+test('browser finalizes first and second runs once each with exact final checkpoints', async (t) => {
+  const modules = loadModules();
+  const bridge = browserTransport();
+  const clock = { now: 0 };
+  const { adapter } = loadBrowserAdapter(modules, null, null, { fetch: bridge.fetch, clock, t });
+  for (const [index, steps] of [[0, 7], [1, 13]]) {
+    await adapter.restartRun();
+    bridge.accept(bridge.decisions()[index]);
+    await waitUntil(() => !adapter.getState().controller.pending);
+    const { game, runId } = adapter.getState();
+    for (let tick = 0; tick < steps; tick += 1) modules.core.stepGame(game, null);
+    clock.now += 300;
+    const expectedHash = modules.core.hashGame(game);
+    await adapter.endRun('aborted');
+    await adapter.endRun('aborted');
+    assert.equal(bridge.ends().length, index + 1, 'each run must finalize exactly once');
+    const terminal = bridge.ends().at(-1).body.terminal;
+    assert.equal(terminal.tick, steps);
+    const finalCheckpoint = bridge.events(runId).filter((event) => event.type === 'checkpoint').at(-1);
+    assert.equal(finalCheckpoint.tick, steps);
+    assert.equal(finalCheckpoint.payload.checkpoint.tick, steps);
+    assert.equal(finalCheckpoint.payload.hash, expectedHash);
+    assert.equal(finalCheckpoint.sim_ms, terminal.sim_ms);
+    assert.ok(bridge.ends().at(-1).body.last_event_id >= finalCheckpoint.event_id);
+  }
+});
+
+for (const outcome of ['success', 'rejected', 'error']) {
+  test(`old same-sequence decision ${outcome} after restart cannot mutate new authority or trace`, async (t) => {
+    const modules = loadModules();
+    const bridge = browserTransport();
+    const clock = { now: 0 };
+    const { adapter } = loadBrowserAdapter(modules, null, null, { fetch: bridge.fetch, clock, t });
+    await adapter.restartRun();
+    const oldCall = bridge.decisions()[0];
+    const oldGame = adapter.getState().game;
+    for (let tick = 0; tick < 7; tick += 1) modules.core.stepGame(oldGame, null);
+    const oldHash = modules.core.hashGame(oldGame);
+    clock.now = 120;
+    await adapter.restartRun();
+    const newCall = bridge.decisions()[1];
+    assert.equal(oldCall.body.sequence, 1);
+    assert.equal(newCall.body.sequence, 1);
+    const before = adapter.getState();
+    const pending = before.controller.pending;
+    const counters = plain(before.controller.counters);
+    const history = plain(before.history);
+    if (outcome === 'error') oldCall.reject(new Error('old transport failed'));
+    else oldCall.resolve(jsonResponse(validReply(oldCall.body, outcome === 'rejected' ? { api_ok: false, valid_choice: false } : {})));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const after = adapter.getState();
+    assert.ok(after.controller.pending === pending, 'old completion must not settle sequence 1 of the new run');
+    assert.deepEqual(plain(after.controller.counters), counters);
+    assert.deepEqual(plain(after.history), history);
+    assert.equal(after.controller.queued, null);
+    assert.equal(after.nextRequestAllowedWallMs, 0);
+    assert.equal(after.completionEvents.length, 0);
+    assert.equal(after.lastApi.latency_ms, null);
+    assert.equal(bridge.events(after.runId).some((event) => ['response_received', 'response_rejected'].includes(event.type)), false);
+    bridge.accept(newCall);
+    await waitUntil(() => !after.controller.pending);
+    await adapter.endRun('aborted');
+    await waitUntil(() => bridge.ends().length === 2);
+    const oldEnd = bridge.ends().find((call) => call.body.run_id === oldCall.body.run_id);
+    assert.equal(oldEnd.body.terminal.tick, 7);
+    assert.equal(oldEnd.body.terminal.wall_ms, 120);
+    const finalCheckpoint = bridge.events(oldCall.body.run_id).filter((event) => event.type === 'checkpoint').at(-1);
+    assert.equal(finalCheckpoint.payload.hash, oldHash);
+    assert.equal(finalCheckpoint.tick, 7);
+  });
+}
+
+test('late run-start response after restart cannot install old identity or start an old decision', async (t) => {
+  const modules = loadModules();
+  const bridge = browserTransport();
+  bridge.deferStarts = true;
+  const { adapter } = loadBrowserAdapter(modules, null, null, { fetch: bridge.fetch, clock: { now: 0 }, t });
+  const firstStart = adapter.restartRun();
+  await waitUntil(() => bridge.calls.filter((call) => call.route === '/api/run/start').length === 1);
+  const secondStart = adapter.restartRun();
+  await waitUntil(() => bridge.calls.filter((call) => call.route === '/api/run/start').length === 2);
+  const starts = bridge.calls.filter((call) => call.route === '/api/run/start');
+  starts[1].resolve(jsonResponse({ schema_version: 1, run_id: 'new-start', trace_path: 'new-trace' }));
+  await secondStart;
+  const current = adapter.getState().controller;
+  const pending = current.pending;
+  starts[0].resolve(jsonResponse({ schema_version: 1, run_id: 'old-start', trace_path: 'old-trace' }));
+  await firstStart;
+  assert.equal(adapter.getState().runId, 'new-start');
+  assert.equal(current.run_id, 'new-start');
+  assert.equal(current.pending, pending);
+  assert.equal(bridge.decisions().length, 1);
+  bridge.accept(bridge.decisions()[0]);
+  await waitUntil(() => !current.pending);
+  await adapter.endRun('aborted');
+  await waitUntil(() => bridge.ends().length === 2);
+  assert.equal(bridge.ends().find((call) => call.body.run_id === 'old-start').body.terminal.tick, 0);
+});
+
+for (const outcome of ['ack', 'error']) {
+  test(`old trace ${outcome} after restart keeps new-run events and qualification isolated`, async (t) => {
+    const modules = loadModules();
+    const bridge = browserTransport();
+    bridge.deferEvents = true;
+    const { adapter } = loadBrowserAdapter(modules, null, null, { fetch: bridge.fetch, clock: { now: 0 }, t });
+    await adapter.restartRun();
+    const oldEvent = bridge.calls.find((call) => call.route === '/api/run/event');
+    await adapter.restartRun();
+    const newRunId = adapter.getState().runId;
+    if (outcome === 'error') oldEvent.reject(new Error('old trace failed'));
+    else oldEvent.resolve(jsonResponse({ schema_version: 1, run_id: oldEvent.body.run_id, acked_event_id: oldEvent.body.events.at(-1).event_id }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(adapter.getState().qualification.valid, true);
+    bridge.deferEvents = false;
+    for (const call of bridge.calls.filter((item) => item.route === '/api/run/event' && item !== oldEvent)) {
+      call.resolve(jsonResponse({ schema_version: 1, run_id: call.body.run_id, acked_event_id: call.body.events.at(-1).event_id }));
+    }
+    for (const call of bridge.decisions()) bridge.accept(call);
+    await waitUntil(() => !adapter.getState().controller.pending);
+    await adapter.endRun('aborted');
+    await waitUntil(() => bridge.ends().length === 2);
+    const events = bridge.events(newRunId);
+    assert.equal(events.some((event) => event.type === 'qualification_invalidated'), false);
+    const ids = [...new Set(events.map((event) => event.event_id))];
+    assert.deepEqual(ids, Array.from({ length: ids.at(-1) }, (_, index) => index + 1));
+    assert.equal(events.filter((event) => event.type === 'terminal').length, 1);
+  });
+}
+
+test('browser death checkpoint captures the completed fatal tick and does not count finalization time', async (t) => {
+  const modules = loadModules();
+  const bridge = browserTransport();
+  const clock = { now: 0 };
+  const { adapter } = loadBrowserAdapter(modules, null, null, { fetch: bridge.fetch, clock, t });
+  await adapter.restartRun();
+  bridge.accept(bridge.decisions()[0]);
+  await waitUntil(() => !adapter.getState().controller.pending);
+  const { game, runId } = adapter.getState();
+  for (let tick = 0; tick < 7; tick += 1) modules.core.stepGame(game, null);
+  game.player.lives = 1;
+  game.enemyBullets = [bullet({ id: 'fatal-fixture', x: game.player.x, y: game.player.y })];
+  clock.now = 134;
+  adapter.processTick();
+  const terminalHash = modules.core.hashGame(game);
+  clock.now = 900;
+  await adapter.endRun('death');
+  await waitUntil(() => bridge.ends().length === 1);
+  const terminal = bridge.ends()[0].body.terminal;
+  assert.equal(terminal.tick, 8);
+  assert.equal(terminal.wall_ms, 134);
+  const checkpoint = bridge.events(runId).filter((event) => event.type === 'checkpoint').at(-1);
+  assert.equal(checkpoint.tick, 8);
+  assert.equal(checkpoint.payload.checkpoint.tick, 8);
+  assert.equal(checkpoint.payload.checkpoint.player.lives, 0);
+  assert.equal(checkpoint.payload.hash, terminalHash);
+  assert.equal(bridge.events(runId).filter((event) => event.type === 'terminal').at(-1).tick, 8);
+});
+
+test('requests offer all nine fixed-medium paths, both fire choices, and all three intents atomically', () => {
+  const { core, controller: api } = loadModules();
+  const controller = api.createController({ run_id: 'intent-request', epoch: 1 });
+  const request = begin(api, controller, core);
+  assert.equal(request.prompt_version, 'djev-authoritative-v2');
+  assert.equal(request.context_version, 'djev-observation-v2');
+  assert.deepEqual(Object.keys(request.questions), ['path', 'fire', 'intent']);
+  assert.deepEqual(Object.keys(request.questions.path.criteria), [
+    'hold__medium', 'left__medium', 'right__medium', 'up__medium', 'down__medium',
+    'up_left__medium', 'up_right__medium', 'down_left__medium', 'down_right__medium',
+  ]);
+  assert.deepEqual(Object.keys(request.questions.fire.criteria), ['shoot', 'cease']);
+  assert.deepEqual(Object.keys(request.questions.intent.criteria), ['evade', 'recover', 'position']);
+});
+
+test('missing or unknown intent atomically ends current authority and cannot move or shoot', () => {
+  const { core, controller: api } = loadModules();
+  for (const intent of [undefined, null, '', 'unknown', 'Recover', 0, false, {}]) {
+    const controller = api.createController({ run_id: 'invalid-intent', epoch: 1 });
+    const previous = begin(api, controller, core);
+    api.receiveDecision(controller, validReply(previous, { movement: 'left', fire: 'shoot', intent: 'evade' }), { tick: 0, wall_ms: 10 });
+    finish(api, controller, previous, 10);
+    api.commandForTick(controller, { tick: 0, wall_ms: 11 });
+    const request = begin(api, controller, core, 1);
+    const reply = validReply(request, { movement: 'right', fire: 'shoot', intent });
+    if (intent === undefined) delete reply.intent;
+    const received = api.receiveDecision(controller, reply, { tick: 1, wall_ms: 30 });
+    assert.equal(received.events[0].type, 'response_rejected');
+    assert.equal(received.events[0].reason, 'unknown_intent');
+    finish(api, controller, request, 30);
+    const result = api.commandForTick(controller, { tick: 1, wall_ms: 31 });
+    assert.equal(result.command, null);
+    assert.equal(result.events.some((event) => event.type === 'command_applied'), false);
+    assert.equal(result.events.find((event) => event.type === 'command_ended').intent, 'evade');
+    assert.equal(controller.lastAppliedIntent, 'evade', 'invalid replies must not replace factual history');
+    const game = cleanForecastGame(core);
+    core.stepGame(game, result.command);
+    assert.equal(game.player.x, 200);
+    assert.equal(game.player.y, 300);
+    assert.equal(game.playerBullets.length, 0);
+  }
+});
+
+test('every valid intent follows response, application, shot, observation, and lease-ended history', () => {
+  const { core, controller: api } = loadModules();
+  for (const intent of ['evade', 'recover', 'position']) {
+    const controller = api.createController({ run_id: 'intent-history', epoch: 1 });
+    assert.equal(controller.lastAppliedIntent, null);
+    const request = begin(api, controller, core);
+    const received = api.receiveDecision(controller, validReply(request, { fire: 'shoot', intent }), { tick: 0, wall_ms: 10 });
+    assert.equal(received.events[0].intent, intent);
+    assert.equal(controller.queued.decision.intent, intent);
+    assert.equal(controller.lastAppliedIntent, null, 'receiving is not applying');
+    finish(api, controller, request, 10);
+    const applied = api.commandForTick(controller, { tick: 0, wall_ms: 11 });
+    assert.equal(applied.command.intent, intent);
+    assert.equal(applied.events.find((event) => event.type === 'command_applied').command.intent, intent);
+    assert.equal(controller.lastAppliedIntent, intent);
+    const game = cleanForecastGame(core);
+    game.enemies = [scoutEnemy({ x: 800, y: 50 })];
+    core.stepGame(game, applied.command);
+    assert.equal(game.playerBullets[0].authorizedBy.intent, intent);
+    assert.equal(game.playerBullets[0].authorizedBy.decision_id, 'decision-1');
+    const restored = core.restoreGame(core.serializeGame(game));
+    assert.equal(restored.playerBullets[0].authorizedBy.intent, intent);
+    const observed = observeForForecast(core, game, {
+      last_intent: controller.lastAppliedIntent,
+      active_command: { ...applied.command, remaining_ms: 230 },
+      recent_commands: [{ ...applied.command, source: 'djev', elapsed_ms: 16.7, dx: 0, dy: 0 }],
+    });
+    assert.equal(observed.state.last_intent, intent);
+    assert.equal(observed.state.active_command.intent, intent);
+    assert.equal(observed.state.recent_commands[0].intent, intent);
+    const expired = api.commandForTick(controller, { tick: 15, wall_ms: 261 });
+    assert.equal(expired.command, null);
+    assert.equal(expired.events.find((event) => event.type === 'command_ended').intent, intent);
+    assert.equal(expired.events.find((event) => event.type === 'command_ended').confidence?.intent, 0.5);
+    assert.equal(controller.lastAppliedIntent, intent, 'lease expiry retains applied history');
+    core.stepGame(game, expired.command);
+    assert.equal(game.playerBullets[0].authorizedBy.intent, intent, 'expiry does not rewrite shot provenance');
+  }
+});
+
+test('queued, stale, or invalidated decisions never invent or retain an unapplied intent', () => {
+  const { core, controller: api } = loadModules();
+  const controller = api.createController({ run_id: 'intent-reset', epoch: 1 });
+  const game = cleanForecastGame(core);
+  assert.equal(observeForForecast(core, game).state.last_intent, null);
+  assert.equal(api.commandForTick(controller, { tick: 0, wall_ms: 0 }).command, null);
+  assert.equal(controller.lastAppliedIntent, null);
+  const request = begin(api, controller, core);
+  api.receiveDecision(controller, validReply(request, { intent: 'recover' }), { tick: 0, wall_ms: 590 });
+  finish(api, controller, request, 590);
+  assert.equal(api.commandForTick(controller, { tick: 0, wall_ms: 601 }).command, null);
+  assert.equal(controller.lastAppliedIntent, null, 'queued reply expired before application');
+
+  const next = begin(api, controller, core, 40);
+  api.receiveDecision(controller, validReply(next, { intent: 'position', lease: 'medium' }), { tick: 40, wall_ms: 680 });
+  finish(api, controller, next, 680);
+  api.commandForTick(controller, { tick: 40, wall_ms: 681 });
+  assert.equal(controller.lastAppliedIntent, 'position');
+  const invalidated = api.invalidateController(controller, 'paused');
+  assert.equal(invalidated.events.find((event) => event.type === 'command_ended').intent, 'position');
+  assert.equal(controller.lastAppliedIntent, null);
+  assert.equal(controller.active, null);
+  api.receiveDecision(controller, validReply(next, { intent: 'evade' }), { tick: 40, wall_ms: 682 });
+  assert.equal(controller.lastAppliedIntent, null);
+  assert.equal(api.commandForTick(controller, { tick: 40, wall_ms: 683 }).command, null);
+  assert.equal(api.createController({ run_id: 'new-run', epoch: 1 }).lastAppliedIntent, null);
+});
+
+test('intent is optional on observed historical spans and never defaults neutral history to a model intent', () => {
+  const { core } = loadModules();
+  const game = cleanForecastGame(core);
+  const observed = observeForForecast(core, game, {
+    active_command: { movement: 'hold', fire: 'cease', lease: 'short', remaining_ms: 50 },
+    recent_commands: [
+      { movement: 'left', fire: 'cease', lease: 'short', source: 'djev' },
+      { movement: 'hold', fire: 'cease', lease: null, source: 'neutral' },
+    ],
+  });
+  assert.equal(observed.state.last_intent, null);
+  assert.equal(Object.hasOwn(observed.state.active_command, 'intent'), false);
+  assert.equal(observed.state.recent_commands.some((span) => Object.hasOwn(span, 'intent')), false);
+});
+
+test('browser sends applied intent history and renders Chinese plus enum without starting a run', () => {
+  const modules = loadModules();
+  const { core, controller: api } = modules;
+  const game = cleanForecastGame(core);
+  const controller = api.createController({ run_id: 'browser-intent', epoch: 1 });
+  const { adapter, element } = loadBrowserAdapter(modules, game, controller);
+  for (const [index, intent, label, probability] of [[0, 'evade', '避险', 0], [1, 'recover', '回中', 0.73], [2, 'position', '稳定站位', undefined]]) {
+    const request = begin(api, controller, core, index);
+    const received = api.receiveDecision(controller, validReply(request, { movement: 'left', intent, lease: 'medium', confidence: { intent: probability } }), { tick: index, wall_ms: 80 + index });
+    adapter.updateRecentFromEvents(received.events);
+    finish(api, controller, request, 80 + index);
+    const applied = api.commandForTick(controller, { tick: index, wall_ms: 90 + index });
+    adapter.updateRecentFromEvents(applied.events);
+    const observed = adapter.currentObservation();
+    assert.equal(observed.state.last_intent, intent);
+    assert.equal(observed.state.active_command.intent, intent);
+    assert.equal(observed.state.recent_commands.at(-1).intent, intent);
+    adapter.updatePanel();
+    for (const text of [element('selected').textContent, element('executed').textContent, element('history').innerHTML]) {
+      assert.ok(text.includes(`${label} (${intent})`), text);
+      assert.ok(text.includes(`API p=${probability === undefined ? '—' : probability.toFixed(3)}`), text);
+    }
+  }
+  game.terminal = { reason: 'death' };
+  adapter.updatePanel();
+  assert.equal(element('neutral-reason').textContent, 'ended · no active command');
+  game.terminal = null;
+  adapter.setPaused(true);
+  assert.equal(adapter.currentObservation().state.last_intent, null);
+  assert.equal(adapter.currentObservation().state.active_command, null);
+});
+
+test('inline modules expose the frozen authoritative runtime contract', () => {
+  const { core, controller, coreScript, controllerScript, engineHash } = loadModules();
+  assert.equal(engineHash, hashSourcePair(coreScript, controllerScript));
+  assert.deepEqual([...core.ACTION_IDS], ['hold', 'left', 'right', 'up', 'down', 'up_left', 'up_right', 'down_left', 'down_right']);
+  assert.deepEqual({ ...core.LEASE_TICKS }, { short: 15, medium: 30 });
+  assert.equal(core.DT_MS, 1000 / 60);
+  assert.deepEqual({ ...core.HARDEST_DIFFICULTY }, HARDEST_PROFILE);
+  assert.equal(ruleValue(core.RULES, ['enemy_fire_interval', 'baseline_s'], ['enemy_fire_baseline_s']), 0.95);
+  assert.equal(ruleValue(core.RULES, ['leases_ticks', 'short'], ['lease_ticks', 'short']), 15);
+  for (const name of ['createGame', 'stepGame', 'observeGame', 'serializeGame', 'restoreGame', 'hashGame', 'gameStatus']) {
+    assert.equal(typeof core[name], 'function', `SpaceDecisionCore.${name}`);
+  }
+  for (const name of ['createController', 'beginDecision', 'receiveDecision', 'commandForTick', 'finishDecision', 'invalidateController']) {
+    assert.equal(typeof controller[name], 'function', `SpaceDjevController.${name}`);
+  }
+});
+
+test('difficulty settings preserve the hardest profile and doubled baseline fire rate', () => {
+  const { engineHash, core } = loadModules();
+  const manifest = makeManifest(engineHash);
+  assert.deepEqual(manifest.difficulty, {
+    bulletDensity: 4,
+    enemyDensity: 3,
+    fastBulletRatio: 0.85,
+    fastBulletSpeed: 2.4,
+  });
+  assert.equal(manifest.rules.enemy_fire_baseline_s, 0.95);
+  assert.equal(manifest.rules.hardest_enemy_fire_interval_s, 0.2375);
+  assert.equal(manifest.rules.player_speed_px_s, 112);
+  assert.equal(manifest.rules.player_lives, 3);
+  assert.equal(manifest.rules.shot_cooldown_s, 0.17);
+  const game = core.createGame(manifest);
+  const status = core.gameStatus(game);
+  assert.equal(typeof status.counters, 'object');
+  assert.equal(Array.isArray(status.counters), false);
+  assert.equal(status.tick, 0);
+  assert.equal(status.sim_ms, 0);
+  assert.equal(status.lives, 3);
+  assert.equal(status.wave, 1);
+  assert.equal(status.game_over, false);
+  const observed = core.observeGame(game, {
+    expected_delay_ms: 260,
+    active_command: null,
+    recent_commands: [],
+    recent_hits: [],
+  });
+  assert.equal(observed.state.difficulty.bulletDensity, 4);
+});
+
+test('all movement and lease pairs stay visible even when candidates collide or hit walls', () => {
+  const { core } = loadModules();
+  const game = core.createGame(makeManifest());
+  const observed = core.observeGame(game, {
+    expected_delay_ms: 260,
+    active_command: null,
+    recent_commands: [],
+    recent_hits: [],
+  });
+  assert.equal(observed.forecast.candidates.length, 9);
+  assert.deepEqual(observed.forecast.candidates.map((candidate) => candidate.id), core.ACTION_IDS);
+  for (const candidate of observed.forecast.candidates) {
+    assert.ok(candidate.short);
+    assert.ok(candidate.medium);
+    assert.ok(Object.hasOwn(candidate.short, 'contact_ms'));
+    assert.ok(Object.hasOwn(candidate.medium, 'contact_ms'));
+  }
+});
+
+test('forecast reports candidate-path bullet contacts on global time after response delay', () => {
+  const { core } = loadModules();
+  const game = cleanForecastGame(core, { x: 200, y: 300 });
+  game.enemyBullets = [bullet({ id: 'global-crossing', x: 240, y: 300 })];
+  const observed = observeForForecast(core, game, { expected_delay_ms: 200 });
+  assert.equal(observed.forecast.prefix.contact_ms, null);
+  near(candidate(observed, 'right').short.contact_ms, 396.4, 1.5, 'right short contact_ms');
+});
+
+test('forecast keeps raw prefix collision separate and does not mask later clear candidate paths', () => {
+  const { core } = loadModules();
+  const game = cleanForecastGame(core, { x: 200, y: 300 });
+  game.enemyBullets = [bullet({ id: 'prefix-only', x: 200, y: 267, vy: 400 })];
+  const observed = observeForForecast(core, game, { expected_delay_ms: 300 });
+  assert.ok(observed.forecast.prefix.contact_ms > 20 && observed.forecast.prefix.contact_ms < 60);
+  assert.equal(candidate(observed, 'right').short.contact_ms, null);
+  assert.equal(candidate(observed, 'up').medium.contact_ms, null);
+});
+
+test('forecast ignores contacts only during known current invulnerability, not after expiry', () => {
+  const { core } = loadModules();
+  const game = cleanForecastGame(core, { x: 200, y: 300, invincible_s: 0.25 });
+  game.enemyBullets = [
+    bullet({ id: 'ignored-during-current-invuln', x: 200, y: 183, vy: 1000 }),
+    bullet({ id: 'counted-after-current-invuln', x: 200, y: -67, vy: 1000 }),
+  ];
+  const observed = observeForForecast(core, game, { expected_delay_ms: 50 });
+  near(candidate(observed, 'hold').short.contact_ms, 350, 2, 'known invulnerability expiry contact_ms');
+});
+
+test('forecast does not invent future invulnerability from prefix collisions to hide later candidate contact', () => {
+  const { core } = loadModules();
+  const game = cleanForecastGame(core, { x: 200, y: 300, invincible_s: 0 });
+  game.enemyBullets = [
+    bullet({ id: 'prefix-damage-would-happen', x: 200, y: 250, vy: 1000 }),
+    bullet({ id: 'later-still-counts', x: 200, y: -67, vy: 1000 }),
+  ];
+  const observed = observeForForecast(core, game, { expected_delay_ms: 100 });
+  assert.ok(observed.forecast.prefix.contact_ms > 20 && observed.forecast.prefix.contact_ms < 60);
+  near(candidate(observed, 'hold').short.contact_ms, 350, 2, 'future invulnerability must not mask later contact');
+});
+
+test('forecast keeps stopped neutral tail through horizon for short-lease contacts', () => {
+  const { core } = loadModules();
+  const game = cleanForecastGame(core, { x: 200, y: 300 });
+  game.enemyBullets = [bullet({ id: 'tail-crossing', x: 228, y: -167, vy: 1000 })];
+  const observed = observeForForecast(core, game, { expected_delay_ms: 100 });
+  near(candidate(observed, 'right').short.contact_ms, 450, 2, 'short stopped-tail contact_ms');
+});
+
+test('forecast exposes factual enemy_clearance_px for every movement and lease independent of invulnerability', () => {
+  const { core } = loadModules();
+  const game = cleanForecastGame(core, { x: 200, y: 300, invincible_s: 1.0 });
+  game.enemies = [scoutEnemy({ x: 260, y: 300 })];
+  const observed = observeForForecast(core, game, { expected_delay_ms: 100 });
+  for (const item of observed.forecast.candidates) {
+    for (const lease of ['short', 'medium']) {
+      assert.equal(Object.hasOwn(item[lease], 'enemy_clearance_px'), true, `${item.id} ${lease} missing enemy_clearance_px`);
+      assert.equal(Number.isFinite(item[lease].enemy_clearance_px), true, `${item.id} ${lease} enemy_clearance_px must be finite`);
+      assert.ok(item[lease].enemy_clearance_px >= 0, `${item.id} ${lease} enemy_clearance_px must be non-negative`);
+    }
+  }
+});
+
+test('a dangerous valid recover action moves into contact unchanged and starts the requested lease', () => {
+  const { core, controller: controllerApi } = loadModules();
+  const controller = controllerApi.createController({ run_id: 'unit-run', epoch: 3 });
+  const request = begin(controllerApi, controller, core, 0);
+  controllerApi.receiveDecision(controller, validReply(request, {
+    decision_id: 'decision-danger',
+    movement: 'down',
+    fire: 'shoot',
+    lease: 'short',
+    intent: 'recover',
+    confidence: { movement: 0.2, fire: 0.9, lease: 0.7 },
+  }), { tick: 0, wall_ms: 121 });
+  finish(controllerApi, controller, request, 121);
+  const applied = controllerApi.commandForTick(controller, { tick: 0, wall_ms: 122 });
+  assert.equal(applied.command.movement, 'down');
+  assert.equal(applied.command.fire, 'shoot');
+  assert.equal(applied.command.intent, 'recover');
+  assert.equal(applied.command.decision_id, 'decision-danger');
+  assert.equal(applied.command.start_tick, 0);
+  assert.equal(applied.command.end_tick, 15);
+  const game = cleanForecastGame(core);
+  game.enemyBullets = [bullet({ id: 'danger-below', x: 200, y: 314 })];
+  const stepped = core.stepGame(game, applied.command);
+  near(game.player.y, 301.8666666666667, 1e-9);
+  assert.equal(game.player.x, 200);
+  assert.equal(game.player.lives, 2, 'the locally dangerous API choice must not be vetoed');
+  assert.ok(stepped.events.some((event) => event.type === 'hit'));
+});
+
+test('missing, invalid, and stale atomic replies produce neutral command state', () => {
+  const { core, controller: controllerApi } = loadModules();
+  for (const reply of [
+    { movement: 'left', fire: null, lease: 'short', valid_choice: false, api_ok: true },
+    { movement: 'left', fire: 'shoot', lease: 'long', valid_choice: true, api_ok: true },
+    { movement: 'left', fire: 'shoot', lease: 'short', valid_choice: true, api_ok: false },
+  ]) {
+    const controller = controllerApi.createController({ run_id: 'unit-run', epoch: 4 });
+    const request = begin(controllerApi, controller, core, 4);
+    controllerApi.receiveDecision(controller, validReply(request, {
+      decision_id: 'bad-decision',
+      ...reply,
+    }), { tick: 4, wall_ms: 100 });
+    finish(controllerApi, controller, request, 100);
+    const result = controllerApi.commandForTick(controller, { tick: 4, wall_ms: 101 });
+    assert.equal(result.command, null);
+  }
+
+  const stale = controllerApi.createController({ run_id: 'unit-run', epoch: 5 });
+  const staleRequest = begin(controllerApi, stale, core, 0);
+  controllerApi.receiveDecision(stale, validReply(staleRequest, {
+    decision_id: 'stale-decision',
+    movement: 'left',
+    fire: 'shoot',
+    lease: 'short',
+  }), { tick: 0, wall_ms: 601 });
+  finish(controllerApi, stale, staleRequest, 601);
+  assert.equal(controllerApi.commandForTick(stale, { tick: 0, wall_ms: 602 }).command, null);
+});
+
+test('lease expiry and old callbacks cannot extend or cancel newer authority', () => {
+  const { core, controller: controllerApi } = loadModules();
+  const controller = controllerApi.createController({ run_id: 'unit-run', epoch: 8 });
+  const oldRequest = begin(controllerApi, controller, core, 0);
+  controllerApi.invalidateController(controller, 'manual-reset');
+  const currentRequest = begin(controllerApi, controller, core, 1);
+  controllerApi.receiveDecision(controller, validReply(oldRequest, {
+    decision_id: 'old-decision',
+    movement: 'left',
+    fire: 'shoot',
+    lease: 'medium',
+  }), { tick: 1, wall_ms: 110 });
+  controllerApi.receiveDecision(controller, validReply(currentRequest, {
+    decision_id: 'current-decision',
+    movement: 'right',
+    fire: 'cease',
+    lease: 'short',
+  }), { tick: 1, wall_ms: 120 });
+  finish(controllerApi, controller, currentRequest, 120);
+  assert.equal(controllerApi.commandForTick(controller, { tick: 1, wall_ms: 121 }).command.movement, 'right');
+  assert.equal(controllerApi.commandForTick(controller, { tick: 15, wall_ms: 360 }).command.movement, 'right');
+  assert.equal(controllerApi.commandForTick(controller, { tick: 16, wall_ms: 377 }).command, null);
+});
+
+test('stale old replies cannot neutralize a newer active command', () => {
+  const { core, controller: controllerApi } = loadModules();
+  const controller = controllerApi.createController({ run_id: 'unit-run', epoch: 11 });
+  const oldRequest = begin(controllerApi, controller, core, 0);
+  controllerApi.invalidateController(controller, 'restart');
+  const currentRequest = begin(controllerApi, controller, core, 1);
+  controllerApi.receiveDecision(controller, validReply(currentRequest, {
+    decision_id: 'current-authority',
+    movement: 'up',
+    fire: 'shoot',
+    lease: 'medium',
+  }), { tick: 1, wall_ms: 100 });
+  finish(controllerApi, controller, currentRequest, 100);
+  assert.equal(controllerApi.commandForTick(controller, { tick: 1, wall_ms: 101 }).command.decision_id, 'current-authority');
+
+  controllerApi.receiveDecision(controller, validReply(oldRequest, {
+    decision_id: 'obsolete-neutralizer',
+    movement: 'left',
+    fire: 'cease',
+    lease: 'short',
+    api_ok: false,
+    valid_choice: false,
+  }), { tick: 2, wall_ms: 120 });
+  const afterOldReply = controllerApi.commandForTick(controller, { tick: 2, wall_ms: 121 });
+  assert.equal(afterOldReply.command.decision_id, 'current-authority');
+  assert.equal(afterOldReply.command.movement, 'up');
+});
+
+test('missing run_id or decision_id is rejected without inventing command authority', () => {
+  const { core, controller: controllerApi } = loadModules();
+  for (const replyPatch of [
+    { run_id: undefined },
+    { run_id: 'wrong-run' },
+    { decision_id: undefined },
+    { decision_id: '' },
+  ]) {
+    const controller = controllerApi.createController({ run_id: 'unit-run', epoch: 12 });
+    const request = begin(controllerApi, controller, core, 0);
+    controllerApi.receiveDecision(controller, validReply(request, replyPatch), { tick: 0, wall_ms: 100 });
+    finish(controllerApi, controller, request, 100);
+    const result = controllerApi.commandForTick(controller, { tick: 0, wall_ms: 101 });
+    assert.equal(result.command, null);
+    assert.equal(result.events.some((event) => event.type === 'command_applied'), false);
+  }
+});
+
+test('neutral ticks do not autofire and shots link to an authorizing decision', () => {
+  const { core } = loadModules();
+  const game = core.createGame(makeManifest());
+  for (let i = 0; i < 20; i += 1) {
+    const { events } = core.stepGame(game, null);
+    const unauthorizedShots = playerShotEvents(events);
+    assert.equal(unauthorizedShots.length, 0);
+  }
+
+  const command = {
+    decision_id: 'run-unit:1:1',
+    sequence: 1,
+    movement: 'hold',
+    fire: 'shoot',
+    lease: 'short',
+    start_tick: 20,
+    end_tick: 35,
+    applied_wall_ms: 333.4,
+    expires_wall_ms: 583.4,
+  };
+  let sawShot = false;
+  for (let tick = 20; tick < 35; tick += 1) {
+    const { events } = core.stepGame(game, command);
+    for (const event of playerShotEvents(events)) {
+      sawShot = true;
+      assert.equal(shotDecisionId(event), 'run-unit:1:1');
+    }
+  }
+  assert.equal(sawShot, true);
+});
+
+test('shoot cooldown continues through cease and never banks extra shots', () => {
+  const { core } = loadModules();
+  const game = core.createGame(makeManifest());
+  const shoot = {
+    decision_id: 'cooldown-shoot',
+    sequence: 1,
+    movement: 'hold',
+    fire: 'shoot',
+    lease: 'medium',
+    start_tick: 0,
+    end_tick: 30,
+    applied_wall_ms: 0,
+    expires_wall_ms: 500,
+  };
+  const firstShotTicks = [];
+  for (let tick = 0; tick < 30; tick += 1) {
+    const { events } = core.stepGame(game, shoot);
+    for (const event of playerShotEvents(events)) firstShotTicks.push(event.tick);
+  }
+  assert.deepEqual(firstShotTicks, [0, 11, 22]);
+
+  for (let tick = 30; tick < 60; tick += 1) {
+    const { events } = core.stepGame(game, null);
+    assert.equal(playerShotEvents(events).length, 0);
+  }
+
+  const resumed = { ...shoot, decision_id: 'cooldown-resume', sequence: 2, start_tick: 60, end_tick: 75, applied_wall_ms: 1000, expires_wall_ms: 1250 };
+  const { events } = core.stepGame(game, resumed);
+  const resumedShots = playerShotEvents(events);
+  assert.equal(resumedShots.length, 1);
+  assert.equal(shotDecisionId(resumedShots[0]), 'cooldown-resume');
+});
+
+test('serialize, restore, and hash form a deterministic replay boundary', () => {
+  const { core } = loadModules();
+  const game = core.createGame(makeManifest());
+  const command = {
+    decision_id: 'move-decision',
+    sequence: 1,
+    movement: 'up_left',
+    fire: 'cease',
+    lease: 'medium',
+    start_tick: 0,
+    end_tick: 30,
+    applied_wall_ms: 0,
+    expires_wall_ms: 500,
+  };
+  for (let i = 0; i < 12; i += 1) core.stepGame(game, command);
+  const checkpoint = core.serializeGame(game);
+  const restored = core.restoreGame(checkpoint);
+  assert.equal(core.hashGame(restored), core.hashGame(game));
+  assert.deepEqual(core.serializeGame(restored), checkpoint);
 });

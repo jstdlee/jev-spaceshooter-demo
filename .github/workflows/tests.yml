@@ -19,7 +19,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Node behavioral tests
-        run: node demo/test_space_shooter_logic.cjs
+        run: |
+          node demo/test_space_shooter_logic.cjs
+          node demo/test_benchmark.cjs
+          node demo/test_strategy_regression.cjs
       - name: Python bridge tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
