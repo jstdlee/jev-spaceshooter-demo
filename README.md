@@ -12,11 +12,11 @@ This is a decision-modeling experiment, not a solved bullet-hell agent. It still
 
 **Historical prototype footage — not the current API-authoritative controller.** The supplied recording shows the earlier hybrid controller, including failed API requests and locally executed fallback actions. It illustrates the arena and dashboard, but must not be used as evidence that djev produced that play.
 
-[![Eight-second excerpt of the historical prototype, including its local-action and API-status panel](docs/media/historical-prototype-preview.gif)](https://github.com/jstdlee/jev-spaceshooter-demo/blob/main/docs/media/space-shooter-demo.webm)
+[![Eight-second excerpt of the historical prototype, including its local-action and API-status panel](docs/media/historical-prototype-preview.gif)](https://raw.githubusercontent.com/jstdlee/jev-spaceshooter-demo/main/docs/media/space-shooter-demo.webm)
 
-**[Watch the full recording](https://github.com/jstdlee/jev-spaceshooter-demo/blob/main/docs/media/space-shooter-demo.webm)** · [Download original WebM](https://raw.githubusercontent.com/jstdlee/jev-spaceshooter-demo/main/docs/media/space-shooter-demo.webm) · [Still frame](docs/media/historical-prototype-poster.png)
+**[Download the full recording — WebM, 14.5 MiB](https://raw.githubusercontent.com/jstdlee/jev-spaceshooter-demo/main/docs/media/space-shooter-demo.webm)** · [Still frame](docs/media/historical-prototype-poster.png)
 
-The inline animation is an 8-second, real-time excerpt; the original video is approximately 84.6 seconds. Both are stored in this repository. See [media provenance](docs/media/README.md) for the source, conversion details, and limitations. Run the demo below for the current implementation; its measured results are listed separately under [Results](#results-and-their-limits).
+The inline animation is an 8-second, real-time excerpt; the original video is approximately 84.6 seconds. GitHub's file viewer does not preview the original at this size, so the full-recording link goes directly to the WebM for download and playback. Both assets are stored in this repository. See [media provenance](docs/media/README.md) for the source, conversion details, and limitations. Run the demo below for the current implementation; its measured results are listed separately under [Results](#results-and-their-limits).
 
 ## Run locally
 
