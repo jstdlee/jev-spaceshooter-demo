@@ -261,6 +261,18 @@ class BackendContractTests(unittest.TestCase):
             })
             self.assertNotIn("secret-fixture", body)
 
+    def test_get_api_config_defaults_to_local_laya_auto_model(self):
+        with mock.patch.dict(server.os.environ, {}, clear=True):
+            httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(httpd.server_close)
+            self.addCleanup(thread.join, 1)
+            self.addCleanup(httpd.shutdown)
+            with server.urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_port}/api/config") as response:
+                body = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(body["provider"], {"url": "http://127.0.0.1:8011", "model": "auto"})
+
     def test_get_serves_the_allowlisted_three_renderer_module_and_sprite_atlas(self):
         httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -550,8 +562,8 @@ class BackendContractTests(unittest.TestCase):
                         self.assertIn("exactrequestbody", record)
                         self.assertEqual(record["exactrequestbody"].encode("utf-8"), request.data)
                         sent = json.loads(request.data)
-                        self.assertEqual(sent.get("steps"), 1)
-                        self.assertEqual(sent.get("samples"), 1)
+                        self.assertNotIn("steps", sent)
+                        self.assertNotIn("samples", sent)
                         self.assertEqual(sent, record["exactactualpayload"])
                         self.assertEqual(list(sent["state"]), [
                             "player", "inside_center_region", "hold_collision", "wait_ms", "wait_collision_ms", "enemy_count", "hold_gap_px",
@@ -620,7 +632,7 @@ class BackendContractTests(unittest.TestCase):
 
         payload = call.call_args.args[1]
         call.assert_called_once()
-        self.assertEqual(set(payload), {"model", "instructions", "state", "questions", "samples", "steps"})
+        self.assertEqual(set(payload), {"model", "instructions", "state", "questions"})
         self.assertEqual(list(payload["questions"]), ["intent", "path", "fire"])
         for question in payload["questions"].values():
             self.assertEqual(set(question), {"type", "instructions", "criteria"})
@@ -642,8 +654,6 @@ class BackendContractTests(unittest.TestCase):
         })
         self.assertEqual(list(payload["questions"]["fire"]["criteria"]), ["shoot", "cease"])
         self.assertEqual(payload["questions"]["fire"]["criteria"], {"shoot": "Fire weapon.", "cease": "Do not fire."})
-        self.assertEqual(payload["samples"], 1)
-        self.assertEqual(payload.get("steps"), 1)
 
         packed = payload["state"]
         self.assertEqual(

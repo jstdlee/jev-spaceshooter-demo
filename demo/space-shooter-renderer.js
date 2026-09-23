@@ -258,7 +258,7 @@ export function createSpaceShooterRenderer({ THREE, host, width = WORLD_WIDTH, h
 
   function syncGame(game) {
     const live = new Set();
-    const track = (entity, prefix, tile, glyph, w, h, z, options) => {
+    const track = (entity, prefix, tile, glyph, w, h, z, options = {}) => {
       const id = `${prefix}:${entity.id}`;
       live.add(id);
       syncEntity(entity, prefix, tile, w, h, z, options);

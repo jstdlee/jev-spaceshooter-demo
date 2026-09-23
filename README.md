@@ -42,10 +42,10 @@ Edit `.env` to match your structured model server:
 ```dotenv
 DJEV_URL=http://127.0.0.1:8011
 DJEV_API_KEY=
-DJEV_MODEL=jev-latest
+DJEV_MODEL=auto
 ```
 
-`jev-latest` is the bridge's default compatibility identifier, **not a claim that an official Jev model is running**. Configure the identifier accepted by your own server. The in-game **Model settings** dialog can override the provider URL and model for the next run in the current browser tab. The URL is a base URL: the bridge appends `/v1/systemone`, so do not include that path yourself. Settings are session-scoped and sent only to the local bridge as part of `/api/run/start`; the bridge captures them for that run. `DJEV_URL` and `DJEV_MODEL` remain the defaults, including for clients that do not send overrides. Set `DJEV_API_KEY` only in the server environment (or local `.env`) if the endpoint requires a bearer key; it is never returned by `/api/config` or sent to the browser. Process environment variables override `.env`; `.env` is ignored by Git.
+The defaults target the local Laya API at `http://127.0.0.1:8011` and use its `auto` routing mode. The in-game **Model settings** dialog can override the provider URL and model for the next run in the current browser tab. The URL is a base URL: the bridge appends `/v1/systemone`, so do not include that path yourself. Settings are session-scoped and sent only to the local bridge as part of `/api/run/start`; the bridge captures them for that run. `DJEV_URL` and `DJEV_MODEL` remain the defaults, including for clients that do not send overrides. Set `DJEV_API_KEY` only in the server environment (or local `.env`) if the endpoint requires a bearer key; it is never returned by `/api/config` or sent to the browser. Process environment variables override `.env`; `.env` is ignored by Git.
 
 ```bash
 python3 demo/space_shooter_server.py --host 127.0.0.1 --port 7865

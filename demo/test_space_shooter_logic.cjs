@@ -291,7 +291,7 @@ function browserTransport() {
       const call = { route, method: init?.method || 'GET', body: init?.body ? JSON.parse(init.body) : null, ...deferred() };
       calls.push(call);
       if (route === '/api/config') {
-        call.resolve(jsonResponse({ schema_version: 1, provider: { url: 'http://127.0.0.1:8011', model: 'jev-latest' } }));
+        call.resolve(jsonResponse({ schema_version: 1, provider: { url: 'http://127.0.0.1:8011', model: 'auto' } }));
       } else if (route === '/api/run/start') {
         const run_id = `browser-run-${++starts}`;
         if (!transport.deferStarts) call.resolve(jsonResponse({ schema_version: 1, run_id, trace_path: `runs/${run_id}` }));
@@ -338,7 +338,7 @@ test('provider defaults and saved per-run settings are applied only after dialog
 
   await adapter.restartRun();
   assert.deepEqual(bridge.calls.find((call) => call.route === '/api/run/start').body.provider,
-    { url: 'http://127.0.0.1:8011', model: 'jev-latest' });
+    { url: 'http://127.0.0.1:8011', model: 'auto' });
   assert.equal(bridge.calls.some((call) => call.body && Object.hasOwn(call.body, 'api_key')), false);
 
   await adapter.openSettings();
@@ -347,7 +347,7 @@ test('provider defaults and saved per-run settings are applied only after dialog
   adapter.cancelSettings();
   await adapter.restartRun();
   assert.deepEqual(bridge.calls.filter((call) => call.route === '/api/run/start')[1].body.provider,
-    { url: 'http://127.0.0.1:8011', model: 'jev-latest' });
+    { url: 'http://127.0.0.1:8011', model: 'auto' });
 
   await adapter.openSettings();
   element('setting-provider-url').value = 'https://provider.example/api/jev/';
@@ -435,6 +435,19 @@ test('Three.js supplies visible geometry glyphs for gameplay entities independen
   renderer.render(game, [], 1 / 60);
   assert.equal(enemyMesh.geometry.disposed, true);
   assert.equal(enemyMesh.material.disposed, true);
+  renderer.dispose();
+});
+
+test('Three.js renderer accepts player bullets without optional render options', async () => {
+  const rendererModuleUrl = `data:text/javascript;base64,${Buffer.from(readFileSync(join(__dirname, 'space-shooter-renderer.js'), 'utf8')).toString('base64')}`;
+  const { createSpaceShooterRenderer } = await import(rendererModuleUrl);
+  const core = loadModules().core;
+  const renderer = createSpaceShooterRenderer({
+    THREE:mockThree(), host:{ clientWidth:598, clientHeight:386, appendChild() {} }, width:960, height:620,
+  });
+  const game = core.createGame({ seed:7 });
+  game.playerBullets = [{ id:'test-bullet', x:300, y:240, w:6, h:14 }];
+  assert.doesNotThrow(() => renderer.render(game, [], 0));
   renderer.dispose();
 });
 

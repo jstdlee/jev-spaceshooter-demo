@@ -34,7 +34,7 @@ RUNS_DIR = DEMO_DIR / "runs"
 SCHEMA_VERSION = 1
 PROMPT_VERSION = "djev-authoritative-v2"
 CONTEXT_VERSION = "djev-observation-v2"
-DJEV_MODEL_DEFAULT = "jev-latest"
+DJEV_MODEL_DEFAULT = "auto"
 DJEV_URL_DEFAULT = "http://127.0.0.1:8011"
 MAX_PACKED_STATE_CHARS = 6000
 MAX_MODEL_LEN = 4096
@@ -688,8 +688,6 @@ def build_upstream_payload(run: RunState, packed_state: dict[str, Any], path_cri
                 "criteria": {fire: FIRE_DESCRIPTIONS[fire] for fire in FIRE_IDS},
             },
         },
-        "samples": 1,
-        "steps": 1,
     }
 
 

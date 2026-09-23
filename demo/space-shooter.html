@@ -95,7 +95,7 @@
   <div id="viewport">
     <main id="fit-root">
       <section id="game-panel" aria-label="Space shooter game panel">
-        <div class="topbar"><span class="topbar-title">Space shooter</span><span id="hud-provider" class="settings-model-note" title="Configured JEV-compatible provider">jev-latest</span></div>
+        <div class="topbar"><span class="topbar-title">Space shooter</span><span id="hud-provider" class="settings-model-note" title="Configured JEV-compatible provider">auto</span></div>
         <div class="hud">
           <div><span class="label">Wave</span><span class="value" id="hud-wave">1</span></div>
           <div><span class="label">Score</span><span class="value" id="hud-score">0</span></div>
@@ -1313,6 +1313,16 @@
   (() => {
     "use strict";
 
+    const showRuntimeError = (source, error) => {
+      const warning = document.getElementById("renderer-warning");
+      if (!warning) return;
+      const message = error instanceof Error ? error.message : String(error || "unknown error");
+      warning.textContent = `Game stopped (${source}): ${message}${error?.stack ? ` · ${error.stack.split("\n")[1]?.trim() || ""}` : ""}`;
+      warning.classList.add("show");
+    };
+    window.addEventListener("error", (event) => showRuntimeError("runtime", event.error || event.message));
+    window.addEventListener("unhandledrejection", (event) => showRuntimeError("async task", event.reason));
+
     const core = globalThis.SpaceDecisionCore;
     const djev = globalThis.SpaceDjevController;
     const $ = (id) => document.getElementById(id);
@@ -1364,7 +1374,7 @@
     let difficulty = core.normalizeDifficulty({});
     const isFileProtocol = location.protocol === "file:";
     const SETTINGS_STORAGE_KEY = "spaceShooterProviderSettings";
-    const DEFAULT_PROVIDER_SETTINGS = { url:"http://127.0.0.1:8011", model:"jev-latest" };
+    const DEFAULT_PROVIDER_SETTINGS = { url:"http://127.0.0.1:8011", model:"auto" };
     let providerSettings = { ...DEFAULT_PROVIDER_SETTINGS };
     let providerSettingsLoad = null;
 
