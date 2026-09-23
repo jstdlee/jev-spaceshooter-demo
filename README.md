@@ -1,8 +1,8 @@
 # Jev Space Shooter — local djev decision demo
 
-A browser space shooter for exploring a practical question: **how do you turn a changing, continuous environment into a small decision problem that a local model can solve quickly enough?**
+A browser space shooter for exploring a practical question: **how do you turn a changing, continuous environment into a small decision problem that a local model can solve quickly enough?** The game is presented in a fixed 600 × 800 panel with a 2.5D Three.js arena, a live decision strip, and a compact control bar.
 
-The left panel is the game; the right panel shows observations, the model's selected action, the action actually executing, latency, request rate, and token throughput. Difficulty controls let you increase enemy count, bullet density, and the proportion and speed of fast bullets.
+The game uses per-run provider settings, while a closed-by-default Diagnostics panel holds detailed observations, candidate paths, metrics, and history. Difficulty controls let you increase enemy count, bullet density, and the proportion and speed of fast bullets.
 
 This project uses a **self-hosted [djev-spark](https://github.com/mmastrac/djev-spark) model endpoint**, not the official hosted Jev service. In the current controller, djev chooses movement and firing. The client computes physical observations and executes the returned command; it does not secretly replace a bad tactical choice with a better one.
 
@@ -22,7 +22,7 @@ The inline animation is an 8-second, real-time excerpt; the original video is ap
 
 ### Dependencies
 
-- A modern browser for the HTML/Canvas game. No Gradio, React, npm install, or frontend build is needed.
+- A modern browser with WebGL for the Three.js game. Three.js 0.186.0 is loaded from jsDelivr; allow CDN access. If WebGL or module loading fails, the game displays a warning and falls back to its Canvas renderer. No Gradio, React, npm install, or frontend build is needed.
 - Python **3.10+** for the HTTP bridge, using only the standard library.
 - A running **djev-spark structured API** at `POST /v1/systemone`.
 - Node.js **22** for the tested offline suites and optional CLI benchmarks; not needed just to open the game through the Python bridge.
@@ -45,13 +45,13 @@ DJEV_API_KEY=
 DJEV_MODEL=jev-latest
 ```
 
-`jev-latest` is the bridge's default compatibility identifier, **not a claim that an official Jev model is running**. Configure the identifier accepted by your own server. Set a bearer key only if the endpoint requires one. Process environment variables override `.env`; `.env` is ignored by Git.
+`jev-latest` is the bridge's default compatibility identifier, **not a claim that an official Jev model is running**. Configure the identifier accepted by your own server. The in-game **Model settings** dialog can override the provider URL and model for the next run in the current browser tab. The URL is a base URL: the bridge appends `/v1/systemone`, so do not include that path yourself. Settings are session-scoped and sent only to the local bridge as part of `/api/run/start`; the bridge captures them for that run. `DJEV_URL` and `DJEV_MODEL` remain the defaults, including for clients that do not send overrides. Set `DJEV_API_KEY` only in the server environment (or local `.env`) if the endpoint requires a bearer key; it is never returned by `/api/config` or sent to the browser. Process environment variables override `.env`; `.env` is ignored by Git.
 
 ```bash
 python3 demo/space_shooter_server.py --host 127.0.0.1 --port 7865
 ```
 
-Open **[http://127.0.0.1:7865/](http://127.0.0.1:7865/)**. Watch both *valid djev commands* and *applied djev commands* increase. Opening the HTML with `file://` does not provide the Python API bridge. A green `/health` response checks the bridge only, not successful model inference.
+Open **[http://127.0.0.1:7865/](http://127.0.0.1:7865/)**. The centered 600 × 800 game panel scales to fit smaller screens without page scrolling. Use **Auto pilot**, **Pause**, **Restart**, and **Model settings** in the control bar; live command validity and application counts remain visible below the arena. Open **Diagnostics** for observations, forecast candidates, and detailed metrics. Watch both *valid djev commands* and *applied djev commands* increase. Opening the HTML with `file://` does not provide the Python API bridge. A green `/health` response checks the bridge only, not successful model inference.
 
 Keep the bridge on loopback for this local demo. The browser never needs the upstream API key. GitHub hosts the source and media, not a running model or Python backend.
 

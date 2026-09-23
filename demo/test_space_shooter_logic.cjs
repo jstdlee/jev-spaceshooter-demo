@@ -204,13 +204,20 @@ function mockThree({ failWebGL = false, deferTexture = false } = {}) {
 // Lifecycle tests supply mocked transport; no test can reach a real HTTP service.
 function loadBrowserAdapter(modules, game, controller, options = {}) {
   const elements = new Map();
-    const element = (id) => {
+  const browserWindow = { innerWidth:options.viewport?.width ?? 600, innerHeight:options.viewport?.height ?? 800, addEventListener() {} };
+  const element = (id) => {
     if (!elements.has(id)) elements.set(id, {
       textContent: '', innerHTML: '', width: 960, height: 620,
       value: '', title: '', open: false, listeners: {}, style: {},
       getContext: () => ({}), addEventListener(type, fn) { this.listeners[type] = fn; },
       showModal() { this.open = true; }, close() { this.open = false; },
-      classList: { toggle() {}, add() {}, remove() {} },
+      classList: (() => {
+        const classes = new Set();
+        return {
+          toggle(name, force) { if (force ?? !classes.has(name)) classes.add(name); else classes.delete(name); return classes.has(name); },
+          add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, contains(name) { return classes.has(name); },
+        };
+      })(),
     });
     return elements.get(id);
   };
@@ -218,7 +225,7 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
     SpaceDecisionCore: modules.core,
     SpaceDjevController: modules.controller,
     document: { getElementById: element },
-    window: { innerWidth:600, innerHeight:800, addEventListener() {} },
+    window: browserWindow,
     location: { protocol: options.fetch ? 'http:' : 'file:' },
     performance: { now: () => options.clock?.now ?? 100 },
     fetch: options.fetch || (() => { throw new Error('browser unit tests must never call HTTP'); }),
@@ -248,7 +255,7 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
     globalThis.adapter = {
       currentObservation, updateRecentFromEvents, updatePanel, setPaused,
       restartRun, maybeBeginDecision, endRun, processTick, enqueueEvents, drainTrace,
-      loadProviderSettings, openSettings, cancelSettings, applySettingsAndRestart, frame,
+      loadProviderSettings, openSettings, cancelSettings, applySettingsAndRestart, frame, resizeGameFrame, showRendererWarning,
       getState: () => ({ game, controller, runId, qualification, lastApi,
         completionEvents, history, nextRequestAllowedWallMs, providerSettings }),
     };
@@ -353,6 +360,21 @@ test('provider defaults and saved per-run settings are applied only after dialog
     { url: 'https://provider.example/api/jev', model: 'fast-model' });
   assert.equal(element('hud-provider').textContent, 'fast-model');
   assert.equal(JSON.stringify(bridge.calls).includes('api_key'), false);
+});
+
+test('fixed game panel proportionally scales for a narrow viewport without page scrolling', () => {
+  const { adapter, element } = loadBrowserAdapter(loadModules(), null, null, { viewport:{ width:360, height:740 } });
+  adapter.resizeGameFrame();
+  assert.equal(element('fit-root').style.transform, 'translate(-50%,-50%) scale(0.6)');
+  assert.match(loadModules().html, /html, body \{[^}]*overflow:hidden/);
+});
+
+test('renderer initialization failure shows the Canvas fallback warning and keeps its canvas visible', () => {
+  const { adapter, element } = loadBrowserAdapter(loadModules(), null, null);
+  adapter.showRendererWarning('WebGL unavailable');
+  assert.equal(element('renderer-warning').textContent, 'Three.js unavailable; using Canvas fallback (WebGL unavailable)');
+  assert.equal(element('renderer-warning').classList.contains('show'), true);
+  assert.equal(element('game').style.display, 'block');
 });
 
 test('Three.js renderer is read-only with deterministic state and reports WebGL initialization failure', async () => {
