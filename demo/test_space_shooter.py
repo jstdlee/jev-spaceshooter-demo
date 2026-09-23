@@ -261,6 +261,28 @@ class BackendContractTests(unittest.TestCase):
             })
             self.assertNotIn("secret-fixture", body)
 
+    def test_get_serves_the_allowlisted_three_renderer_module_and_sprite_atlas(self):
+        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(thread.join, 1)
+        self.addCleanup(httpd.shutdown)
+
+        expected = {
+            "/space-shooter-renderer.js": (server.DEMO_DIR / "space-shooter-renderer.js", "javascript"),
+            "/assets/space-shooter-sprites.png": (server.DEMO_DIR / "assets" / "space-shooter-sprites.png", "png"),
+        }
+        for route, (asset, content_type) in expected.items():
+            with self.subTest(route=route), server.urllib.request.urlopen(
+                f"http://127.0.0.1:{httpd.server_port}{route}"
+            ) as response:
+                self.assertIn(content_type, response.headers.get("Content-Type", ""))
+                self.assertEqual(response.read(), asset.read_bytes())
+        with self.assertRaises(server.urllib.error.HTTPError) as error:
+            server.urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_port}/../space_shooter_server.py")
+        self.assertEqual(error.exception.code, 404)
+
     def test_run_start_pins_prompt_source_hash_and_runtime_without_auth_secrets(self):
         result = self.start_run()
         self.assertEqual(result["schema_version"], 1)

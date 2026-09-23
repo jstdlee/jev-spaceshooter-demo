@@ -166,7 +166,8 @@ function scoutEnemy({ id = 'enemy-fixture', x = 260, y = 300 }) {
   return { id, type: 'scout', x, y, vx: 0, phase: 0, w: 32, h: 24, hp: 2, maxHp: 2 };
 }
 
-function mockThree({ failWebGL = false } = {}) {
+function mockThree({ failWebGL = false, deferTexture = false } = {}) {
+  const stats = { spriteMaps:[], meshes:[], points:[], completeTexture:null };
   const vector = () => ({ x:0, y:0, z:0, set(x, y, z = 0) { this.x = x; this.y = y; this.z = z; } });
   class Scene { constructor() { this.children = []; } add(item) { this.children.push(item); } remove(item) { this.children = this.children.filter((child) => child !== item); } }
   class Camera { constructor() { this.position = vector(); } updateProjectionMatrix() {} }
@@ -174,18 +175,28 @@ function mockThree({ failWebGL = false } = {}) {
     constructor() { if (failWebGL) throw new Error('WebGL unavailable'); this.domElement = { style:{}, addEventListener() {} }; }
     setPixelRatio() {} setSize() {} render() {} dispose() {}
   }
-  class TextureLoader { load(_path, onLoad) { const texture = { offset:vector(), repeat:vector(), clone() { return { offset:vector(), repeat:vector(), dispose() {} }; }, dispose() {} }; onLoad?.(texture); return texture; } }
-  class SpriteMaterial { constructor(options) { Object.assign(this, options); } dispose() {} }
+  class TextureLoader {
+    load(_path, onLoad) {
+      let imageReady = !deferTexture;
+      const texture = { offset:vector(), repeat:vector(), get ready() { return imageReady; }, clone() { return { ready:imageReady, offset:vector(), repeat:vector(), dispose() {} }; }, dispose() {} };
+      if (deferTexture) stats.completeTexture = () => { imageReady = true; onLoad?.(texture); };
+      else onLoad?.(texture);
+      return texture;
+    }
+  }
+  class SpriteMaterial { constructor(options) { Object.assign(this, options); stats.spriteMaps.push(options.map); } dispose() {} }
   class Sprite { constructor(material) { this.material = material; this.position = vector(); this.scale = vector(); this.visible = true; this.rotation = { z:0 }; } }
-  class BufferGeometry { setAttribute() {} dispose() {} }
+  class MeshBasicMaterial { constructor(options) { Object.assign(this, options); } dispose() { this.disposed = true; } }
+  class Mesh { constructor(geometry, material) { this.geometry = geometry; this.material = material; this.position = vector(); this.scale = vector(); this.rotation = { z:0 }; stats.meshes.push(this); } }
+  class BufferGeometry { setAttribute() {} dispose() { this.disposed = true; } }
   class Float32BufferAttribute { constructor(array, size) { this.array = array; this.size = size; } }
   class PointsMaterial { constructor(options) { Object.assign(this, options); } dispose() {} }
-  class Points { constructor(geometry, material) { this.geometry = geometry; this.material = material; this.position = vector(); } }
+  class Points { constructor(geometry, material) { this.geometry = geometry; this.material = material; this.position = vector(); this.scale = vector(); stats.points.push(this); } }
   class Color { constructor(value) { this.value = value; } }
   return {
-    Scene, OrthographicCamera:Camera, WebGLRenderer:Renderer, TextureLoader, SpriteMaterial, Sprite,
+    Scene, OrthographicCamera:Camera, WebGLRenderer:Renderer, TextureLoader, SpriteMaterial, Sprite, MeshBasicMaterial, Mesh,
     BufferGeometry, Float32BufferAttribute, PointsMaterial, Points, Color,
-    SRGBColorSpace:'srgb', AdditiveBlending:1, ClampToEdgeWrapping:2,
+    SRGBColorSpace:'srgb', AdditiveBlending:1, ClampToEdgeWrapping:2, stats,
   };
 }
 
@@ -224,7 +235,7 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
       return timer;
     },
     clearTimeout,
-    requestAnimationFrame() { throw new Error('browser unit tests must never start animation'); },
+    requestAnimationFrame() {},
     fixtureGame: game, fixtureController: controller,
   };
   const adapterScript = modules.html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
@@ -237,7 +248,7 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
     globalThis.adapter = {
       currentObservation, updateRecentFromEvents, updatePanel, setPaused,
       restartRun, maybeBeginDecision, endRun, processTick, enqueueEvents, drainTrace,
-      loadProviderSettings, openSettings, cancelSettings, applySettingsAndRestart,
+      loadProviderSettings, openSettings, cancelSettings, applySettingsAndRestart, frame,
       getState: () => ({ game, controller, runId, qualification, lastApi,
         completionEvents, history, nextRequestAllowedWallMs, providerSettings }),
     };
@@ -370,6 +381,63 @@ test('Three.js renderer is read-only with deterministic state and reports WebGL 
   assert.equal(left.tick, 13, 'simulation remains callable after renderer failure');
   renderer.dispose();
   fallbackRenderer.dispose();
+});
+
+test('Three.js creates sprites only after the atlas image has loaded', async () => {
+  const rendererModuleUrl = `data:text/javascript;base64,${Buffer.from(readFileSync(join(__dirname, 'space-shooter-renderer.js'), 'utf8')).toString('base64')}`;
+  const core = loadModules().core;
+  const three = mockThree({ deferTexture:true });
+  const { createSpaceShooterRenderer } = await import(rendererModuleUrl);
+  const renderer = createSpaceShooterRenderer({ THREE:three, host:{ clientWidth:598, clientHeight:386, appendChild() {} }, width:960, height:620 });
+  renderer.render(core.createGame({ seed:7 }), [], 0);
+  three.stats.completeTexture();
+  renderer.render(core.createGame({ seed:7 }), [], 1 / 60);
+  assert.ok(three.stats.spriteMaps.length > 0);
+  assert.ok(three.stats.spriteMaps.every((map) => map.ready), 'sprite texture clones must carry the decoded image');
+  renderer.dispose();
+});
+
+test('Three.js supplies visible geometry glyphs for gameplay entities independent of sprite textures', async () => {
+  const rendererModuleUrl = `data:text/javascript;base64,${Buffer.from(readFileSync(join(__dirname, 'space-shooter-renderer.js'), 'utf8')).toString('base64')}`;
+  const { createSpaceShooterRenderer } = await import(rendererModuleUrl);
+  const core = loadModules().core;
+  const three = mockThree({ deferTexture:true });
+  const renderer = createSpaceShooterRenderer({ THREE:three, host:{ clientWidth:598, clientHeight:386, appendChild() {} }, width:960, height:620 });
+  const game = core.createGame({ seed:7 });
+  game.enemies = [scoutEnemy({ id:'glyph-enemy', x:300, y:100 })];
+  renderer.render(game, [], 0);
+  assert.ok(three.stats.meshes.length >= 2, 'player and enemy geometry must render before the atlas finishes loading');
+  assert.ok(three.stats.meshes.every((mesh) => mesh.geometry && mesh.material.color !== undefined));
+  const enemyMesh = three.stats.meshes.at(-1);
+  game.enemies = [];
+  renderer.render(game, [], 1 / 60);
+  assert.equal(enemyMesh.geometry.disposed, true);
+  assert.equal(enemyMesh.material.disposed, true);
+  renderer.dispose();
+});
+
+test('Three.js creates and expires a particle burst at the destroyed enemy position', async () => {
+  const rendererModuleUrl = `data:text/javascript;base64,${Buffer.from(readFileSync(join(__dirname, 'space-shooter-renderer.js'), 'utf8')).toString('base64')}`;
+  const { createSpaceShooterRenderer } = await import(rendererModuleUrl);
+  const core = loadModules().core;
+  const three = mockThree();
+  const renderer = createSpaceShooterRenderer({ THREE:three, host:{ clientWidth:598, clientHeight:386, appendChild() {} }, width:960, height:620 });
+  const game = core.createGame({ seed:7 });
+  game.enemies = [scoutEnemy({ id:'blast-enemy', x:321, y:177 })];
+  renderer.render(game, [], 0);
+  const backgroundPointCount = three.stats.points.length;
+  game.enemies = [];
+  renderer.render(game, [{ type:'enemy_destroyed', enemy_id:'blast-enemy', enemy_type:'scout' }], 1 / 60);
+  assert.equal(three.stats.points.length, backgroundPointCount + 1);
+  renderer.render(game, [], 1);
+  assert.equal(three.stats.points.at(-1).material.opacity, 0, 'expired particle bursts must become invisible');
+  renderer.dispose();
+});
+
+test('animation frame safely waits while the initial provider config is loading', () => {
+  const { adapter } = loadBrowserAdapter(loadModules(), null, null);
+  assert.equal(adapter.getState().game, null);
+  assert.doesNotThrow(() => adapter.frame(120));
 });
 
 test('run integrity reports the ending reason only after a complete end acknowledgement', async (t) => {

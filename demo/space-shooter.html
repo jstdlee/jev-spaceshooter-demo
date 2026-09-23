@@ -2115,10 +2115,12 @@
     }
 
     function frame(now) {
-      update(now);
-      if (threeRenderer) threeRenderer.render(game, game.events, now / 1000);
-      else draw();
-      updatePanel(now);
+      if (game) {
+        update(now);
+        if (threeRenderer) threeRenderer.render(game, game.events, now / 1000);
+        else draw();
+        updatePanel(now);
+      }
       requestAnimationFrame(frame);
     }
 

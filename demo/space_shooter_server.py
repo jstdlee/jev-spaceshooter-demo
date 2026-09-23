@@ -24,6 +24,10 @@ from typing import Any
 
 DEMO_DIR = Path(__file__).resolve().parent
 HTML_PATH = DEMO_DIR / "space-shooter.html"
+STATIC_ASSETS = {
+    "/space-shooter-renderer.js": (DEMO_DIR / "space-shooter-renderer.js", "text/javascript; charset=utf-8"),
+    "/assets/space-shooter-sprites.png": (DEMO_DIR / "assets" / "space-shooter-sprites.png", "image/png"),
+}
 STRATEGY_PATH = DEMO_DIR / "strategy.md"
 RUNS_DIR = DEMO_DIR / "runs"
 
@@ -1243,6 +1247,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"schema_version": SCHEMA_VERSION, "provider": effective_provider_config()})
         elif self.path in {"/", "/space-shooter.html"}:
             self._send(200, HTML_PATH.read_bytes(), "text/html; charset=utf-8")
+        elif self.path in STATIC_ASSETS:
+            asset_path, content_type = STATIC_ASSETS[self.path]
+            self._send(200, asset_path.read_bytes(), content_type)
         elif self.path == "/health":
             self._send(200, b'{"ok":true}', "application/json")
         else:
