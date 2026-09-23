@@ -8,6 +8,7 @@ __pycache__/
 .cache/
 *.log
 node_modules/
+.worktrees/
 data/
 benchmark-results/
 runs/
