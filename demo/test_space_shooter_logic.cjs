@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
@@ -165,6 +166,29 @@ function scoutEnemy({ id = 'enemy-fixture', x = 260, y = 300 }) {
   return { id, type: 'scout', x, y, vx: 0, phase: 0, w: 32, h: 24, hp: 2, maxHp: 2 };
 }
 
+function mockThree({ failWebGL = false } = {}) {
+  const vector = () => ({ x:0, y:0, z:0, set(x, y, z = 0) { this.x = x; this.y = y; this.z = z; } });
+  class Scene { constructor() { this.children = []; } add(item) { this.children.push(item); } remove(item) { this.children = this.children.filter((child) => child !== item); } }
+  class Camera { constructor() { this.position = vector(); } updateProjectionMatrix() {} }
+  class Renderer {
+    constructor() { if (failWebGL) throw new Error('WebGL unavailable'); this.domElement = { style:{}, addEventListener() {} }; }
+    setPixelRatio() {} setSize() {} render() {} dispose() {}
+  }
+  class TextureLoader { load(_path, onLoad) { const texture = { offset:vector(), repeat:vector(), clone() { return { offset:vector(), repeat:vector(), dispose() {} }; }, dispose() {} }; onLoad?.(texture); return texture; } }
+  class SpriteMaterial { constructor(options) { Object.assign(this, options); } dispose() {} }
+  class Sprite { constructor(material) { this.material = material; this.position = vector(); this.scale = vector(); this.visible = true; this.rotation = { z:0 }; } }
+  class BufferGeometry { setAttribute() {} dispose() {} }
+  class Float32BufferAttribute { constructor(array, size) { this.array = array; this.size = size; } }
+  class PointsMaterial { constructor(options) { Object.assign(this, options); } dispose() {} }
+  class Points { constructor(geometry, material) { this.geometry = geometry; this.material = material; this.position = vector(); } }
+  class Color { constructor(value) { this.value = value; } }
+  return {
+    Scene, OrthographicCamera:Camera, WebGLRenderer:Renderer, TextureLoader, SpriteMaterial, Sprite,
+    BufferGeometry, Float32BufferAttribute, PointsMaterial, Points, Color,
+    SRGBColorSpace:'srgb', AdditiveBlending:1, ClampToEdgeWrapping:2,
+  };
+}
+
 // Exercise the actual adapter with a stub DOM and no bootstrap or animation.
 // Lifecycle tests supply mocked transport; no test can reach a real HTTP service.
 function loadBrowserAdapter(modules, game, controller, options = {}) {
@@ -204,7 +228,7 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
     fixtureGame: game, fixtureController: controller,
   };
   const adapterScript = modules.html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
-  const bootstrap = /    resizeGameFrame\(\);\s*syncDifficultyControls\(\);\s*restartRun\(\);\s*requestAnimationFrame\(frame\);\s*\}\)\(\);\s*$/;
+  const bootstrap = /    resizeGameFrame\(\);\s*syncDifficultyControls\(\);\s*restartRun\(\);\s*initializeRenderer\(\);\s*requestAnimationFrame\(frame\);\s*\}\)\(\);\s*$/;
   assert.ok(bootstrap.test(adapterScript), 'adapter bootstrap must be excluded from this offline harness');
   vm.runInNewContext(adapterScript.replace(bootstrap, `
     game = fixtureGame;
@@ -318,6 +342,34 @@ test('provider defaults and saved per-run settings are applied only after dialog
     { url: 'https://provider.example/api/jev', model: 'fast-model' });
   assert.equal(element('hud-provider').textContent, 'fast-model');
   assert.equal(JSON.stringify(bridge.calls).includes('api_key'), false);
+});
+
+test('Three.js renderer is read-only with deterministic state and reports WebGL initialization failure', async () => {
+  const rendererSource = readFileSync(join(__dirname, 'space-shooter-renderer.js'), 'utf8');
+  assert.doesNotMatch(rendererSource, /space-decision-core/);
+  assert.doesNotMatch(rendererSource, /\bgame\.[\w$]+\s*=/, 'renderer must not mutate canonical game properties');
+  const moduleUrl = `data:text/javascript;base64,${Buffer.from(rendererSource).toString('base64')}`;
+  const rendererModule = await import(moduleUrl);
+  const host = { clientWidth:598, clientHeight:386, appendChild() {} };
+  const renderer = rendererModule.createSpaceShooterRenderer({ THREE:mockThree(), host, width:960, height:620, onError(error) { throw error; } });
+  const left = loadModules().core.createGame({ seed:311 });
+  const right = loadModules().core.createGame({ seed:311 });
+  const core = loadModules().core;
+  for (let tick = 0; tick < 12; tick += 1) {
+    core.stepGame(left, null);
+    core.stepGame(right, null);
+    renderer.render(left, left.events, tick / 60);
+    assert.equal(core.hashGame(left), core.hashGame(right));
+  }
+  const failed = [];
+  const fallbackRenderer = rendererModule.createSpaceShooterRenderer({
+    THREE:mockThree({ failWebGL:true }), host, width:960, height:620, onError(error) { failed.push(error.message); },
+  });
+  assert.deepEqual(failed, ['WebGL unavailable']);
+  core.stepGame(left, null);
+  assert.equal(left.tick, 13, 'simulation remains callable after renderer failure');
+  renderer.dispose();
+  fallbackRenderer.dispose();
 });
 
 test('run integrity reports the ending reason only after a complete end acknowledgement', async (t) => {

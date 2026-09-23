@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>djev-authoritative space shooter</title>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js" } }
+  </script>
   <style>
     :root { color-scheme:dark; --bg:#050a14; --panel:#0b1424; --line:#20324d; --text:#e8f1ff; --muted:#91a6c5; --cyan:#5ce1e6; --blue:#6e8cff; --amber:#ffc86b; --red:#ff7086; --green:#79e6a6; --magenta:#e75aff; }
     * { box-sizing:border-box; }
@@ -99,7 +102,7 @@
           <div><span class="label">Hull</span><span class="value" id="hud-lives">♥♥♥</span></div>
           <div><span class="label">Mode</span><span class="value" id="hud-mode">AUTO</span></div>
         </div>
-        <div class="arena">
+        <div id="game-arena" class="arena">
           <canvas id="game" width="960" height="620" aria-label="Space shooter arena"></canvas>
           <div id="renderer-warning" role="status"></div>
         </div>
@@ -1315,6 +1318,7 @@
     const $ = (id) => document.getElementById(id);
     const canvas = $("game");
     const ctx = canvas.getContext("2d");
+    const arena = $("game-arena");
     const W = canvas.width;
     const H = canvas.height;
     const FIXED_DT_MS = core.DT_MS;
@@ -1335,6 +1339,8 @@
     const stars = Array.from({ length:100 }, () => ({ x:random(0, W), y:random(0, H), speed:random(12, 70), size:random(.5, 2), alpha:random(.2, .8) }));
 
     let game = null;
+    let threeRenderer = null;
+    let rendererResizeObserver = null;
     let controller = null;
     let autopilot = true;
     let paused = false;
@@ -1986,6 +1992,47 @@
       }
     }
 
+    function showRendererWarning(message) {
+      const warning = $("renderer-warning");
+      warning.textContent = `Three.js unavailable; using Canvas fallback (${message})`;
+      warning.classList.add("show");
+      canvas.style.display = "block";
+      threeRenderer?.dispose();
+      threeRenderer = null;
+    }
+
+    async function initializeRenderer() {
+      try {
+        const [THREE, rendererModule] = await Promise.all([
+          import("three"),
+          import("./space-shooter-renderer.js"),
+        ]);
+        const candidate = rendererModule.createSpaceShooterRenderer({
+          THREE,
+          host: arena,
+          width: W,
+          height: H,
+          onError: (error) => showRendererWarning(error.message),
+        });
+        if ($("renderer-warning").classList.contains("show")) {
+          candidate.dispose();
+          return;
+        }
+        threeRenderer = candidate;
+        canvas.style.display = "none";
+        $("renderer-warning").classList.remove("show");
+        if (typeof ResizeObserver !== "undefined") {
+          rendererResizeObserver = new ResizeObserver((entries) => {
+            const box = entries[0]?.contentRect;
+            if (box) threeRenderer?.resize(box.width, box.height);
+          });
+          rendererResizeObserver.observe(arena);
+        }
+      } catch (error) {
+        showRendererWarning(error.message || "module load failed");
+      }
+    }
+
     async function restartRun(reason = "reset") {
       if (!isFileProtocol) await loadProviderSettings();
       const runProviderSettings = { ...providerSettings };
@@ -2069,7 +2116,8 @@
 
     function frame(now) {
       update(now);
-      draw();
+      if (threeRenderer) threeRenderer.render(game, game.events, now / 1000);
+      else draw();
       updatePanel(now);
       requestAnimationFrame(frame);
     }
@@ -2101,6 +2149,7 @@
     resizeGameFrame();
     syncDifficultyControls();
     restartRun();
+    initializeRenderer();
     requestAnimationFrame(frame);
   })();
   </script>
