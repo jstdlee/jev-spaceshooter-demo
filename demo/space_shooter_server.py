@@ -129,6 +129,8 @@ class RunState:
     prompt_hash: str
     context_version: str
     engine_source_hash: str
+    provider_url: str
+    configured_model: str
     model_identity: dict[str, Any]
     upstream_lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
     event_lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
@@ -251,22 +253,39 @@ def _enum(value: Any, name: str, allowed: tuple[str, ...], *, nullable: bool = F
     return value
 
 
-def _safe_endpoint() -> str:
+def validate_provider_config(value: Any) -> dict[str, str]:
     _load_env_file()
-    endpoint = os.environ.get("DJEV_URL", DJEV_URL_DEFAULT).rstrip("/")
+    value = _require_object(value, "provider")
+    unknown = set(value) - {"url", "model"}
+    if unknown:
+        raise RequestValidationError(f"provider contains unknown fields: {', '.join(sorted(unknown))}")
+    raw_url = value.get("url", os.environ.get("DJEV_URL", DJEV_URL_DEFAULT))
+    model = value.get("model", os.environ.get("DJEV_MODEL", DJEV_MODEL_DEFAULT))
+    if not isinstance(raw_url, str) or not raw_url or raw_url != raw_url.strip():
+        raise RequestValidationError("provider.url must be a trimmed absolute HTTP(S) base URL")
     try:
-        parsed = urllib.parse.urlsplit(endpoint)
-        netloc = parsed.hostname or ""
-        if parsed.port is not None:
-            netloc = f"{netloc}:{parsed.port}"
-        return urllib.parse.urlunsplit((parsed.scheme, netloc, parsed.path.rstrip("/"), "", ""))
-    except ValueError:
-        return endpoint.split("@")[-1]
+        parsed = urllib.parse.urlsplit(raw_url)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise RequestValidationError("provider.url is malformed or has an invalid port") from exc
+    path = parsed.path.rstrip("/")
+    if (parsed.scheme not in {"http", "https"} or not hostname or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment
+            or path.endswith("/v1/systemone")):
+        raise RequestValidationError(
+            "provider.url must be an HTTP(S) base URL without credentials, query, fragment, or a duplicated /v1/systemone path"
+        )
+    if not isinstance(model, str):
+        raise RequestValidationError("provider.model must be a string")
+    model = model.strip()
+    if not model or len(model) > MAX_MODEL_LEN:
+        raise RequestValidationError(f"provider.model must contain 1 to {MAX_MODEL_LEN} characters")
+    return {"url": urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", "")), "model": model}
 
 
-def _configured_model() -> str:
-    _load_env_file()
-    return os.environ.get("DJEV_MODEL", DJEV_MODEL_DEFAULT)
+def effective_provider_config() -> dict[str, str]:
+    return validate_provider_config({})
 
 
 def _usage_count(value: Any) -> int | None:
@@ -360,6 +379,7 @@ def _validate_manifest(manifest: Any) -> dict[str, Any]:
 def start_run(body: dict[str, Any]) -> dict[str, Any]:
     body = _require_schema(body)
     manifest = _validate_manifest(body.get("manifest"))
+    provider = validate_provider_config(body.get("provider", {}))
     prompt_text, prompt_hash = load_strategy(manifest["prompt_version"])
     actual_engine_hash = compute_engine_source_hash()
     if manifest["engine_hash"] != actual_engine_hash:
@@ -372,21 +392,24 @@ def start_run(body: dict[str, Any]) -> dict[str, Any]:
         run_path = RUNS_DIR / run_id
     run_path.mkdir(parents=True, exist_ok=False)
     events_path = run_path / "events.jsonl"
+    run_manifest = {**manifest, "provider": provider}
     model_identity = {
-        "configured_model": _configured_model(),
-        "endpoint": _safe_endpoint(),
+        "configured_model": provider["model"],
+        "endpoint": provider["url"],
         "response_model": None,
     }
     run = RunState(
         run_id=run_id,
         run_path=run_path,
         events_path=events_path,
-        manifest=json.loads(_canonical_json(manifest)),
+        manifest=json.loads(_canonical_json(run_manifest)),
         prompt_version=manifest["prompt_version"],
         prompt_text=prompt_text,
         prompt_hash=prompt_hash,
         context_version=manifest["context_version"],
         engine_source_hash=actual_engine_hash,
+        provider_url=provider["url"],
+        configured_model=provider["model"],
         model_identity=model_identity,
     )
     _append_record(
@@ -762,15 +785,14 @@ def _decision_id(run_id: str, epoch: int, sequence: int) -> str:
     return f"{run_id}-e{epoch}-s{sequence}-{secrets.token_hex(4)}"
 
 
-def _call_djev(payload: dict[str, Any]) -> UpstreamResult:
+def _call_djev(run: RunState, payload: dict[str, Any]) -> UpstreamResult:
     _load_env_file()
-    base_url = os.environ.get("DJEV_URL", DJEV_URL_DEFAULT).rstrip("/")
     headers = {"Content-Type": "application/json"}
     api_key = os.environ.get("DJEV_API_KEY", os.environ.get("API_KEY", ""))
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     request = urllib.request.Request(
-        base_url + "/v1/systemone",
+        run.provider_url + "/v1/systemone",
         data=_compact_json(payload).encode("utf-8"),
         headers=headers,
         method="POST",
@@ -921,7 +943,7 @@ def handle_decision(body: dict[str, Any]) -> dict[str, Any]:
         upstream_started_utc = _utc_now()
         upstream_started_monotonic_ms = round(time.monotonic() * 1000, 3)
         try:
-            upstream = _call_djev(payload)
+            upstream = _call_djev(run, payload)
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError, UnicodeDecodeError) as exc:
             latency_ms = max(0.0, time.monotonic() * 1000 - upstream_started_monotonic_ms)
             result = _null_decision(
@@ -1217,7 +1239,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path in {"/", "/space-shooter.html"}:
+        if self.path == "/api/config":
+            self._send_json(200, {"schema_version": SCHEMA_VERSION, "provider": effective_provider_config()})
+        elif self.path in {"/", "/space-shooter.html"}:
             self._send(200, HTML_PATH.read_bytes(), "text/html; charset=utf-8")
         elif self.path == "/health":
             self._send(200, b'{"ok":true}', "application/json")

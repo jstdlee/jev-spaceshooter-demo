@@ -180,6 +180,87 @@ class BackendContractTests(unittest.TestCase):
     def start_run(self):
         return server.start_run(start_body())
 
+    def test_provider_config_uses_environment_defaults_and_rejects_unsafe_values(self):
+        with mock.patch.dict(server.os.environ, {
+            "DJEV_URL": "http://127.0.0.1:8011/", "DJEV_MODEL": "default-model",
+        }, clear=True):
+            self.assertEqual(server.validate_provider_config({}), {
+                "url": "http://127.0.0.1:8011", "model": "default-model",
+            })
+            for url in (
+                "file:///tmp/api", "http://user:pass@example.test", "https://example.test/?token=x",
+                "https://example.test/#fragment", "https://example.test/v1/systemone",
+                "http://[broken", "http://example.test:bad",
+            ):
+                with self.subTest(url=url), self.assertRaises(server.RequestValidationError):
+                    server.validate_provider_config({"url": url, "model": "m"})
+            for provider in (
+                {"url": "http://example.test", "model": "  "},
+                {"url": "http://example.test", "model": "m" * (server.MAX_MODEL_LEN + 1)},
+                {"url": "http://example.test", "model": "m", "api_key": "secret"},
+            ):
+                with self.subTest(provider=provider), self.assertRaises(server.RequestValidationError):
+                    server.validate_provider_config(provider)
+
+    def test_provider_settings_are_captured_per_run_and_used_for_upstream_calls(self):
+        response_body = {
+            "model": "fixture-response",
+            "answers": {
+                "intent": {"choice": "position", "confidence": 0.9},
+                "path": {"choice": "hold__medium", "confidence": 0.9},
+                "fire": {"choice": "shoot", "confidence": 0.9},
+            },
+        }
+        captured = []
+
+        def capture_request(request, *, timeout):
+            captured.append((request.full_url, json.loads(request.data)))
+            raw = io.BytesIO(json.dumps(response_body).encode("utf-8"))
+            raw.status = 200
+            return raw
+
+        with mock.patch.dict(server.os.environ, {"DJEV_API_KEY": "secret-fixture"}, clear=True), \
+                mock.patch.object(server.urllib.request, "urlopen", side_effect=capture_request):
+            runs = []
+            for url, model in (("http://first.example/", "first-model"),
+                               ("https://provider.example/api/jev/", "second-model")):
+                body = start_body()
+                body["provider"] = {"url": url, "model": model}
+                runs.append(server.start_run(body))
+
+            for run in runs:
+                result = server.handle_decision(decision_body(run["run_id"]))
+                self.assertTrue(result["valid_choice"])
+
+        self.assertEqual([url for url, _ in captured], [
+            "http://first.example/v1/systemone",
+            "https://provider.example/api/jev/v1/systemone",
+        ])
+        self.assertEqual([request["model"] for _, request in captured], ["first-model", "second-model"])
+        for run in runs:
+            records = self.read_records(run["run_id"])
+            self.assertEqual(records[0]["manifest"]["provider"]["model"], records[0]["model_identity"]["configured_model"])
+            self.assertNotIn("secret-fixture", json.dumps(records))
+
+    def test_get_api_config_exposes_only_safe_effective_provider_values(self):
+        with mock.patch.dict(server.os.environ, {
+            "DJEV_URL": "https://provider.example/api/jev/", "DJEV_MODEL": "default-model",
+            "DJEV_API_KEY": "secret-fixture",
+        }, clear=True):
+            httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(httpd.server_close)
+            self.addCleanup(thread.join, 1)
+            self.addCleanup(httpd.shutdown)
+            with server.urllib.request.urlopen(f"http://127.0.0.1:{httpd.server_port}/api/config") as response:
+                body = response.read().decode("utf-8")
+            self.assertEqual(json.loads(body), {
+                "schema_version": 1,
+                "provider": {"url": "https://provider.example/api/jev", "model": "default-model"},
+            })
+            self.assertNotIn("secret-fixture", body)
+
     def test_run_start_pins_prompt_source_hash_and_runtime_without_auth_secrets(self):
         result = self.start_run()
         self.assertEqual(result["schema_version"], 1)
@@ -515,7 +596,7 @@ class BackendContractTests(unittest.TestCase):
         self.assertEqual(result["usage"], {"input_tokens": 314, "output_tokens": 16})
         self.assertEqual(result["api_token_throughput"], round(330 / 0.1895, 1))
 
-        payload = call.call_args.args[0]
+        payload = call.call_args.args[1]
         call.assert_called_once()
         self.assertEqual(set(payload), {"model", "instructions", "state", "questions", "samples", "steps"})
         self.assertEqual(list(payload["questions"]), ["intent", "path", "fire"])
@@ -625,7 +706,7 @@ class BackendContractTests(unittest.TestCase):
         result = server.handle_decision(body)
 
         self.assertTrue(result["valid_choice"])
-        packed = call.call_args.args[0]["state"]
+        packed = call.call_args.args[1]["state"]
         self.assertEqual(list(packed), ["player", "inside_center_region", "hold_collision", "wait_ms", "wait_collision_ms", "enemy_count", "hold_gap_px"])
 
     @mock.patch.object(server, "_call_djev")
@@ -722,7 +803,7 @@ class BackendContractTests(unittest.TestCase):
             del forecast["short"]
         result = server.handle_decision(body)
         self.assertEqual((result["movement"], result["fire"], result["lease"]), ("hold", "cease", "medium"))
-        payload = call.call_args.args[0]
+        payload = call.call_args.args[1]
         self.assertEqual(len(payload["questions"]["path"]["criteria"]), 9)
         self.assertFalse(any(path_id.endswith("__short") for path_id in payload["questions"]["path"]["criteria"]))
 
@@ -798,7 +879,7 @@ class BackendContractTests(unittest.TestCase):
         end_result = {}
         thread_errors = []
 
-        def slow_upstream(_payload):
+        def slow_upstream(_run, _payload):
             upstream_started.set()
             if not release_upstream.wait(timeout=1):
                 raise AssertionError("test upstream was not released")
