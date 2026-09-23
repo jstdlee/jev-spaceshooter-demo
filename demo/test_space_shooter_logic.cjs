@@ -169,10 +169,13 @@ function scoutEnemy({ id = 'enemy-fixture', x = 260, y = 300 }) {
 // Lifecycle tests supply mocked transport; no test can reach a real HTTP service.
 function loadBrowserAdapter(modules, game, controller, options = {}) {
   const elements = new Map();
-  const element = (id) => {
+    const element = (id) => {
     if (!elements.has(id)) elements.set(id, {
       textContent: '', innerHTML: '', width: 960, height: 620,
-      getContext: () => ({}), addEventListener() {}, classList: { toggle() {} },
+      value: '', title: '', open: false, listeners: {}, style: {},
+      getContext: () => ({}), addEventListener(type, fn) { this.listeners[type] = fn; },
+      showModal() { this.open = true; }, close() { this.open = false; },
+      classList: { toggle() {}, add() {}, remove() {} },
     });
     return elements.get(id);
   };
@@ -180,10 +183,15 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
     SpaceDecisionCore: modules.core,
     SpaceDjevController: modules.controller,
     document: { getElementById: element },
-    window: { addEventListener() {} },
+    window: { innerWidth:600, innerHeight:800, addEventListener() {} },
     location: { protocol: options.fetch ? 'http:' : 'file:' },
     performance: { now: () => options.clock?.now ?? 100 },
     fetch: options.fetch || (() => { throw new Error('browser unit tests must never call HTTP'); }),
+    sessionStorage: options.sessionStorage || (() => {
+      const data = new Map();
+      return { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value), removeItem: (key) => data.delete(key) };
+    })(),
+    URL,
     TextEncoder, AbortController,
     crypto: require('node:crypto').webcrypto,
     setTimeout: (fn, ms) => {
@@ -196,7 +204,7 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
     fixtureGame: game, fixtureController: controller,
   };
   const adapterScript = modules.html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
-  const bootstrap = /    syncDifficultyControls\(\);\s*restartRun\(\);\s*requestAnimationFrame\(frame\);\s*\}\)\(\);\s*$/;
+  const bootstrap = /    resizeGameFrame\(\);\s*syncDifficultyControls\(\);\s*restartRun\(\);\s*requestAnimationFrame\(frame\);\s*\}\)\(\);\s*$/;
   assert.ok(bootstrap.test(adapterScript), 'adapter bootstrap must be excluded from this offline harness');
   vm.runInNewContext(adapterScript.replace(bootstrap, `
     game = fixtureGame;
@@ -205,8 +213,9 @@ function loadBrowserAdapter(modules, game, controller, options = {}) {
     globalThis.adapter = {
       currentObservation, updateRecentFromEvents, updatePanel, setPaused,
       restartRun, maybeBeginDecision, endRun, processTick, enqueueEvents, drainTrace,
+      loadProviderSettings, openSettings, cancelSettings, applySettingsAndRestart,
       getState: () => ({ game, controller, runId, qualification, lastApi,
-        completionEvents, history, nextRequestAllowedWallMs }),
+        completionEvents, history, nextRequestAllowedWallMs, providerSettings }),
     };
   })();`), sandbox);
   element('space-decision-core').textContent = modules.coreScript;
@@ -237,9 +246,11 @@ function browserTransport() {
   const transport = {
     calls, deferStarts: false, deferEvents: false, deferEnds: false,
     fetch: (route, init) => {
-      const call = { route, body: JSON.parse(init.body), ...deferred() };
+      const call = { route, method: init?.method || 'GET', body: init?.body ? JSON.parse(init.body) : null, ...deferred() };
       calls.push(call);
-      if (route === '/api/run/start') {
+      if (route === '/api/config') {
+        call.resolve(jsonResponse({ schema_version: 1, provider: { url: 'http://127.0.0.1:8011', model: 'jev-latest' } }));
+      } else if (route === '/api/run/start') {
         const run_id = `browser-run-${++starts}`;
         if (!transport.deferStarts) call.resolve(jsonResponse({ schema_version: 1, run_id, trace_path: `runs/${run_id}` }));
       } else if (route === '/api/run/event') {
@@ -272,6 +283,41 @@ test('run integrity shows recording only after the start acknowledgement', async
   bridge.accept(bridge.decisions()[0]);
   await waitUntil(() => !adapter.getState().controller.pending);
   await adapter.endRun('aborted');
+});
+
+test('provider defaults and saved per-run settings are applied only after dialog confirmation', async (t) => {
+  const bridge = browserTransport();
+  const session = (() => {
+    const data = new Map();
+    return { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  })();
+  const { adapter, element } = loadBrowserAdapter(loadModules(), null, null,
+    { fetch: bridge.fetch, sessionStorage: session, clock: { now: 0 }, t });
+
+  await adapter.restartRun();
+  assert.deepEqual(bridge.calls.find((call) => call.route === '/api/run/start').body.provider,
+    { url: 'http://127.0.0.1:8011', model: 'jev-latest' });
+  assert.equal(bridge.calls.some((call) => call.body && Object.hasOwn(call.body, 'api_key')), false);
+
+  await adapter.openSettings();
+  element('setting-provider-url').value = 'https://cancelled.example';
+  element('setting-model-name').value = 'cancelled-model';
+  adapter.cancelSettings();
+  await adapter.restartRun();
+  assert.deepEqual(bridge.calls.filter((call) => call.route === '/api/run/start')[1].body.provider,
+    { url: 'http://127.0.0.1:8011', model: 'jev-latest' });
+
+  await adapter.openSettings();
+  element('setting-provider-url').value = 'https://provider.example/api/jev/';
+  element('setting-model-name').value = 'fast-model';
+  await adapter.applySettingsAndRestart();
+  const starts = bridge.calls.filter((call) => call.route === '/api/run/start');
+  assert.deepEqual(starts[2].body.provider,
+    { url: 'https://provider.example/api/jev', model: 'fast-model' });
+  assert.deepEqual(JSON.parse(session.getItem('spaceShooterProviderSettings')),
+    { url: 'https://provider.example/api/jev', model: 'fast-model' });
+  assert.equal(element('hud-provider').textContent, 'fast-model');
+  assert.equal(JSON.stringify(bridge.calls).includes('api_key'), false);
 });
 
 test('run integrity reports the ending reason only after a complete end acknowledgement', async (t) => {

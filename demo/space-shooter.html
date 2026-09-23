@@ -5,85 +5,127 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>djev-authoritative space shooter</title>
   <style>
-    :root { color-scheme: dark; --bg:#050a14; --panel:#0b1424; --line:#20324d; --text:#e8f1ff; --muted:#91a6c5; --cyan:#5ce1e6; --blue:#6e8cff; --amber:#ffc86b; --red:#ff7086; --green:#79e6a6; }
+    :root { color-scheme:dark; --bg:#050a14; --panel:#0b1424; --line:#20324d; --text:#e8f1ff; --muted:#91a6c5; --cyan:#5ce1e6; --blue:#6e8cff; --amber:#ffc86b; --red:#ff7086; --green:#79e6a6; --magenta:#e75aff; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; background:radial-gradient(circle at 50% -10%,#152d50 0,#07101f 38%,#03070e 100%); color:var(--text); font:14px/1.45 Inter,system-ui,sans-serif; }
-    .shell { width:min(1380px,96vw); margin:20px auto; }
-    header { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:14px; }
-    h1 { margin:0; font-size:clamp(22px,3vw,34px); letter-spacing:-.03em; }
-    .eyebrow { color:var(--cyan); font-size:11px; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
-    .sub { color:var(--muted); max-width:800px; }
-    .layout { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(350px,.85fr); gap:14px; align-items:start; }
-    .panel { background:linear-gradient(180deg,rgba(15,28,48,.96),rgba(7,14,26,.96)); border:1px solid var(--line); border-radius:14px; box-shadow:0 20px 55px rgba(0,0,0,.28); overflow:hidden; }
-    #game-panel { position:relative; }
-    canvas { width:100%; display:block; aspect-ratio:48/31; background:#020711; }
-    .hud { display:grid; grid-template-columns:repeat(6,1fr); gap:1px; border-top:1px solid var(--line); background:var(--line); }
-    .hud > div { background:#081221; padding:10px 12px; min-width:0; }
-    .label { display:block; color:var(--muted); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
-    .value { display:block; margin-top:2px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .controls { display:flex; flex-wrap:wrap; gap:8px; padding:12px; border-top:1px solid var(--line); }
-    button { border:1px solid #2b496c; border-radius:8px; background:#10213a; color:var(--text); padding:8px 11px; cursor:pointer; font-weight:700; }
-    button:hover { border-color:var(--cyan); }
-    .side { display:grid; gap:14px; }
-    .section { padding:14px; }
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; }
+    body { background:radial-gradient(circle at 50% 8%,#152d50 0,#07101f 38%,#03070e 100%); color:var(--text); font:14px/1.35 Inter,system-ui,sans-serif; }
+    button, input { font:inherit; }
+    #viewport { position:fixed; inset:0; overflow:hidden; }
+    #fit-root { position:absolute; left:50%; top:50%; width:600px; height:800px; transform:translate(-50%,-50%); transform-origin:center; }
+    #game-panel { position:relative; display:grid; grid-template-rows:42px 60px 388px 124px 76px 1fr; width:600px; height:800px; overflow:hidden; border:1px solid #263b58; border-radius:16px; background:linear-gradient(180deg,#0c1729,#050b15); box-shadow:0 24px 80px rgba(0,0,0,.52),inset 0 1px rgba(255,255,255,.04); }
+    .topbar { display:flex; align-items:center; justify-content:space-between; padding:0 14px; border-bottom:1px solid rgba(54,79,112,.6); color:#dceaff; font-size:11px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
+    .topbar-title { display:flex; align-items:center; gap:8px; }
+    .topbar-title::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--cyan); box-shadow:0 0 12px rgba(92,225,230,.8); }
+    .hud { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#20324d; border-bottom:1px solid #20324d; }
+    .hud > div { min-width:0; padding:8px 12px 6px; background:#081221; }
+    .label { display:block; color:var(--muted); font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    .value { display:block; margin-top:3px; overflow:hidden; color:#eff6ff; font-size:15px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    #hud-lives { color:#ff8cac; letter-spacing:.08em; }
+    #hud-mode { color:var(--green); }
+    .arena { position:relative; overflow:hidden; background:#020711; border-bottom:1px solid #20324d; }
+    #game { display:block; width:100%; height:100%; background:#020711; }
+    #renderer-warning { position:absolute; top:8px; left:8px; right:8px; display:none; padding:7px 9px; border:1px solid rgba(255,200,107,.5); border-radius:7px; color:var(--amber); background:rgba(12,18,30,.88); font-size:10px; }
+    #renderer-warning.show { display:block; }
+    .decision-strip { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,.68fr) minmax(0,.82fr) repeat(2,minmax(0,.62fr)); gap:1px; background:#20324d; border-bottom:1px solid #20324d; }
+    .decision-cell { min-width:0; padding:10px 11px; background:#081221; }
+    .decision-cell strong { display:block; margin-top:5px; overflow:hidden; color:#f0f6ff; font-size:12px; font-weight:750; text-overflow:ellipsis; white-space:nowrap; }
+    #hud-api { color:var(--amber); }
+    #hud-latency { color:#d8e8ff; }
+    #hud-valid { color:var(--green); }
+    #hud-applied { color:var(--cyan); }
+    .controls { display:flex; align-items:center; gap:7px; padding:10px 11px; border-bottom:1px solid #20324d; background:#07111f; }
+    button { min-height:34px; padding:0 10px; border:1px solid #2b496c; border-radius:7px; color:var(--text); background:#10213a; font-size:10px; font-weight:750; cursor:pointer; white-space:nowrap; }
+    button:hover, button:focus-visible { border-color:var(--cyan); outline:none; }
+    button.primary { border-color:#317c8a; color:#eaffff; background:#10333e; }
+    .controls-spacer { flex:1; }
+    .controls-note { min-width:0; overflow:hidden; color:var(--muted); font-size:9px; text-align:right; text-overflow:ellipsis; white-space:nowrap; }
+    .run-footer { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:1px; background:#20324d; }
+    .run-footer > div { min-width:0; padding:12px; background:#081221; }
+    .run-footer strong { display:block; margin-top:5px; overflow:hidden; color:#e7f0ff; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+    .run-footer .secondary { display:flex; justify-content:space-between; gap:8px; margin-top:5px; color:var(--muted); font-size:10px; }
+    .diagnostics { display:none; position:absolute; z-index:3; inset:7px 8px 94px; overflow:hidden; border:1px solid #315071; border-radius:10px; background:rgba(5,11,21,.97); box-shadow:0 16px 48px rgba(0,0,0,.55); }
+    .diagnostics[open] { display:block; overflow:auto; }
+    .diagnostics > summary { min-height:35px; padding:9px 11px; color:var(--cyan); font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; cursor:pointer; }
+    .diagnostics[open] > summary { position:sticky; top:0; z-index:1; background:#0a1526; border-bottom:1px solid var(--line); }
+    .section { padding:12px; }
     .section + .section { border-top:1px solid var(--line); }
-    .section h2 { margin:0 0 10px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; }
-    .statusline { display:grid; grid-template-columns:92px 1fr; gap:8px; padding:5px 0; border-bottom:1px solid rgba(56,80,113,.35); }
+    .section h2 { margin:0 0 9px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; }
+    .statusline { display:grid; grid-template-columns:92px 1fr; gap:8px; padding:5px 0; border-bottom:1px solid rgba(56,80,113,.35); font-size:11px; }
     .statusline:last-child { border-bottom:0; }
     .statusline span:first-child { color:var(--muted); }
     .statusline strong { min-width:0; overflow-wrap:anywhere; }
     .candidate-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
-    .candidate { border:1px solid var(--line); border-radius:7px; padding:6px; min-width:0; background:#091528; }
-    .candidate b { display:block; font-size:10px; overflow:hidden; text-overflow:ellipsis; }
-    .candidate small { color:var(--muted); font-size:9px; display:block; line-height:1.2; }
-    .candidate.clear { border-color:rgba(121,230,166,.55); }
-    .candidate.risk { border-color:rgba(255,112,134,.55); }
-    .candidate.bound { opacity:.72; }
-    .metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
-    .metric { background:#07111f; border:1px solid var(--line); border-radius:8px; padding:8px; }
-    .metric b { display:block; font-size:17px; }
-    .metric span { color:var(--muted); font-size:9px; line-height:1.25; display:block; }
-    .tuning-grid { display:grid; gap:10px; }
-    .slider-row { display:grid; grid-template-columns:112px minmax(90px,1fr) 58px; gap:9px; align-items:center; color:var(--muted); font-size:12px; }
+    .candidate { min-width:0; padding:6px; border:1px solid var(--line); border-radius:7px; background:#091528; }
+    .candidate b { display:block; overflow:hidden; font-size:10px; text-overflow:ellipsis; }
+    .candidate small { display:block; color:var(--muted); font-size:9px; line-height:1.2; }
+    .candidate.clear { border-color:rgba(121,230,166,.55); } .candidate.risk { border-color:rgba(255,112,134,.55); } .candidate.bound { opacity:.72; }
+    .metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:7px; }
+    .metric { padding:7px; border:1px solid var(--line); border-radius:7px; background:#07111f; }
+    .metric b { display:block; font-size:15px; font-variant-numeric:tabular-nums; }
+    .metric span { display:block; color:var(--muted); font-size:9px; line-height:1.25; }
+    .tuning-grid { display:grid; gap:9px; }
+    .slider-row { display:grid; grid-template-columns:112px minmax(90px,1fr) 58px; gap:9px; align-items:center; color:var(--muted); font-size:11px; }
     .slider-row b { color:var(--text); text-align:right; font-variant-numeric:tabular-nums; }
     input[type="range"] { width:100%; accent-color:var(--cyan); }
     .history { display:grid; gap:6px; max-height:210px; overflow:auto; }
-    .history-item { display:grid; grid-template-columns:72px 1fr auto; gap:7px; color:var(--muted); font-size:11px; }
+    .history-item { display:grid; grid-template-columns:72px 1fr auto; gap:7px; color:var(--muted); font-size:10px; }
     .ok { color:var(--green)!important; } .warn { color:var(--amber)!important; } .bad { color:var(--red)!important; }
-    .note { color:var(--muted); font-size:10px; margin-top:8px; }
-    .http-warning { display:none; width:100%; color:var(--amber); font-size:11px; border:1px solid rgba(255,200,107,.45); border-radius:8px; padding:8px 10px; background:rgba(255,200,107,.08); }
+    .note { margin-top:8px; color:var(--muted); font-size:9px; }
+    .http-warning { display:none; color:var(--amber); font-size:10px; }
     .http-warning.show { display:block; }
-    @media (max-width:980px) { .layout { grid-template-columns:1fr; } .hud { grid-template-columns:repeat(3,1fr); } }
-    @media (max-width:560px) { .shell { width:100%; margin:0; } .panel { border-radius:0; } header { padding:12px; } .hud { grid-template-columns:repeat(2,1fr); } }
+    dialog { width:min(420px,calc(100vw - 32px)); padding:0; border:1px solid #345274; border-radius:12px; color:var(--text); background:#0a1423; box-shadow:0 24px 90px rgba(0,0,0,.7); }
+    dialog::backdrop { background:rgba(1,5,12,.72); backdrop-filter:blur(3px); }
+    .settings-head { padding:16px 18px 11px; border-bottom:1px solid var(--line); }
+    .settings-head h2 { margin:0; font-size:16px; letter-spacing:-.02em; }
+    .settings-body { display:grid; gap:13px; padding:16px 18px; }
+    .settings-body label { display:grid; gap:6px; color:#c7d7ef; font-size:11px; font-weight:700; }
+    .settings-body input { width:100%; height:38px; padding:0 10px; border:1px solid #294362; border-radius:7px; outline:none; color:var(--text); background:#050d19; font-size:12px; }
+    .settings-body input:focus { border-color:var(--cyan); }
+    .settings-help { margin:0; color:var(--muted); font-size:10px; }
+    .settings-error { min-height:14px; margin:0; color:var(--red); font-size:10px; }
+    .settings-actions { display:flex; justify-content:flex-end; gap:8px; padding:0 18px 16px; }
+    .settings-model-note { overflow:hidden; color:var(--cyan); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; } }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header>
-      <div><div class="eyebrow">djev · API-authoritative path + fire + intent</div><h1>Space shooter live control trace</h1></div>
-      <div class="sub">djev returns three atomic choices: one of nine movement paths, shoot/cease, and intent — 避险 (evade), 回中 (recover), or 稳定站位 (position). Each accepted command authorizes at most 500 ms; any missing, invalid, or stale choice means neutral hold plus cease.</div>
-    </header>
-    <div class="layout">
-      <section id="game-panel" class="panel">
-        <canvas id="game" width="960" height="620" aria-label="Space shooter arena"></canvas>
+  <div id="viewport">
+    <main id="fit-root">
+      <section id="game-panel" aria-label="Space shooter game panel">
+        <div class="topbar"><span class="topbar-title">Space shooter</span><span id="hud-provider" class="settings-model-note" title="Configured JEV-compatible provider">jev-latest</span></div>
         <div class="hud">
           <div><span class="label">Wave</span><span class="value" id="hud-wave">1</span></div>
           <div><span class="label">Score</span><span class="value" id="hud-score">0</span></div>
           <div><span class="label">Hull</span><span class="value" id="hud-lives">♥♥♥</span></div>
-          <div><span class="label">Run ID</span><span class="value" id="hud-run">starting</span></div>
-          <div><span class="label">Sim elapsed</span><span class="value" id="hud-elapsed">0.0 s</span></div>
           <div><span class="label">Mode</span><span class="value" id="hud-mode">AUTO</span></div>
         </div>
-        <div class="controls">
-          <button id="autopilot-button">Auto pilot: ON</button>
-          <button id="pause-button">Pause</button>
-          <button id="restart-button">Restart run</button>
-          <span id="http-warning" class="http-warning">This page is open as a local file, so djev and trace HTTP endpoints are unreachable. Serve it from the preview/server HTTP URL for model-controlled evidence; local file play remains neutral hold plus cease on failures.</span>
-          <span class="sub">Manual input, pause, reset, profile changes, or lag invalidate benchmark qualification for the active run.</span>
+        <div class="arena">
+          <canvas id="game" width="960" height="620" aria-label="Space shooter arena"></canvas>
+          <div id="renderer-warning" role="status"></div>
         </div>
-      </section>
-      <aside class="side">
-        <section id="decision-panel" class="panel">
+        <div class="decision-strip" aria-label="Live decision dashboard">
+          <div class="decision-cell"><span class="label">Selected command</span><strong id="hud-selected">none</strong></div>
+          <div class="decision-cell"><span class="label">API</span><strong id="hud-api">pending</strong></div>
+          <div class="decision-cell"><span class="label">Latency</span><strong id="hud-latency">— ms</strong></div>
+          <div class="decision-cell"><span class="label">Valid</span><strong id="hud-valid">0</strong></div>
+          <div class="decision-cell"><span class="label">Applied</span><strong id="hud-applied">0</strong></div>
+        </div>
+        <div class="controls">
+          <button id="autopilot-button" class="primary">Auto pilot: ON</button>
+          <button id="pause-button">Pause</button>
+          <button id="restart-button">Restart</button>
+          <button id="settings-button">Model settings</button>
+          <button id="diagnostics-button">Diagnostics</button>
+          <span class="controls-spacer"></span>
+          <span id="http-warning" class="http-warning">Serve via HTTP</span>
+        </div>
+        <div class="run-footer">
+          <div><span class="label">Executing</span><strong id="executed">neutral · hold · cease</strong><span id="neutral-reason" class="secondary">startup</span></div>
+          <div><span class="label">Run integrity</span><strong id="qualification">pending trace</strong><span class="secondary"><span id="hud-run">starting</span><span id="hud-elapsed">0.0 s</span></span></div>
+        </div>
+        <details id="diagnostics" class="diagnostics">
+          <summary>Diagnostics · live control trace</summary>
+          <div id="decision-panel">
           <div class="section">
             <h2>Difficulty</h2>
             <div class="tuning-grid">
@@ -96,11 +138,8 @@
           <div class="section">
             <h2>Authoritative command</h2>
             <div class="statusline"><span>djev</span><strong id="selected">none</strong></div>
-            <div class="statusline"><span>Executing</span><strong id="executed">neutral · hold · cease</strong></div>
             <div class="statusline"><span>Pending</span><strong id="request-status">idle</strong></div>
-            <div class="statusline"><span>Neutral</span><strong id="neutral-reason">startup</strong></div>
             <div class="statusline"><span>Trace</span><strong id="trace-path">not started</strong></div>
-            <div class="statusline"><span>Run integrity</span><strong id="qualification">pending trace</strong></div>
             <div class="note">Trace completion confirms recording integrity; it does not mean the survival benchmark passed.</div>
             <div class="note">Intent and API p report the model's selected intent and returned probability. They do not steer local actions; p is not a calibrated survival estimate.</div>
           </div>
@@ -123,10 +162,21 @@
             </div>
           </div>
           <div class="section"><h2>Recent events</h2><div id="history" class="history"></div></div>
-        </section>
-      </aside>
+          </div>
+        </details>
+      </section>
+    </main>
+  </div>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="settings-head"><h2 id="settings-title">JEV-like model</h2></div>
+    <div class="settings-body">
+      <label for="setting-provider-url">Provider URL<input id="setting-provider-url" type="url" autocomplete="url" required /></label>
+      <label for="setting-model-name">Model name<input id="setting-model-name" type="text" maxlength="4096" autocomplete="off" required /></label>
+      <p class="settings-help">Base URL; <code>/v1/systemone</code> is appended by the bridge. API key stays server-side.</p>
+      <p id="settings-error" class="settings-error" role="alert"></p>
     </div>
-  </main>
+    <div class="settings-actions"><button id="settings-cancel">Cancel</button><button id="settings-apply" class="primary">Apply &amp; restart run</button></div>
+  </dialog>
 
   <script id="space-decision-core">
   (() => {
@@ -1307,6 +1357,85 @@
     let nextRequestAllowedWallMs = 0;
     let difficulty = core.normalizeDifficulty({});
     const isFileProtocol = location.protocol === "file:";
+    const SETTINGS_STORAGE_KEY = "spaceShooterProviderSettings";
+    const DEFAULT_PROVIDER_SETTINGS = { url:"http://127.0.0.1:8011", model:"jev-latest" };
+    let providerSettings = { ...DEFAULT_PROVIDER_SETTINGS };
+    let providerSettingsLoad = null;
+
+    function normalizeProviderSettings(candidate) {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("Enter a provider URL and model name.");
+      if (typeof candidate.url !== "string" || candidate.url !== candidate.url.trim() || !candidate.url) throw new Error("Provider URL is required.");
+      let parsed;
+      try { parsed = new URL(candidate.url); } catch { throw new Error("Enter a valid provider URL."); }
+      if (!(["http:","https:"].includes(parsed.protocol)) || !parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
+        throw new Error("Use an HTTP(S) base URL without credentials, query, or fragment.");
+      }
+      const path = parsed.pathname.replace(/\/+$/, "");
+      if (path.endsWith("/v1/systemone")) throw new Error("Enter the base URL; the bridge appends /v1/systemone.");
+      if (typeof candidate.model !== "string") throw new Error("Model name is required.");
+      const model = candidate.model.trim();
+      if (!model || model.length > 4096) throw new Error("Model name must contain 1 to 4096 characters.");
+      return { url:parsed.origin + path, model };
+    }
+
+    async function loadProviderSettings() {
+      if (!providerSettingsLoad) providerSettingsLoad = (async () => {
+        let configured = { ...DEFAULT_PROVIDER_SETTINGS };
+        try {
+          const response = await fetch("/api/config");
+          if (!response.ok) throw new Error(`config ${response.status}`);
+          const data = await response.json();
+          configured = normalizeProviderSettings(data.provider);
+        } catch (error) {
+          addHistory("config", `using local defaults · ${error.message || error}`, "warn");
+        }
+        try {
+          const saved = sessionStorage.getItem(SETTINGS_STORAGE_KEY);
+          if (saved) configured = normalizeProviderSettings(JSON.parse(saved));
+        } catch {
+          try { sessionStorage.removeItem(SETTINGS_STORAGE_KEY); } catch {}
+        }
+        providerSettings = configured;
+        return { ...providerSettings };
+      })();
+      return providerSettingsLoad;
+    }
+
+    async function openSettings() {
+      await loadProviderSettings();
+      $("setting-provider-url").value = providerSettings.url;
+      $("setting-model-name").value = providerSettings.model;
+      $("settings-error").textContent = "";
+      $("settings-dialog").showModal();
+    }
+
+    function cancelSettings() {
+      $("settings-error").textContent = "";
+      $("settings-dialog").close();
+    }
+
+    async function applySettingsAndRestart() {
+      let next;
+      try {
+        next = normalizeProviderSettings({
+          url:$("setting-provider-url").value,
+          model:$("setting-model-name").value,
+        });
+      } catch (error) {
+        $("settings-error").textContent = error.message;
+        return false;
+      }
+      providerSettings = next;
+      try { sessionStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      $("settings-dialog").close();
+      await restartRun("provider_settings_changed");
+      return true;
+    }
+
+    function resizeGameFrame() {
+      const scale = Math.min(window.innerWidth / 600, window.innerHeight / 800, 1);
+      $("fit-root").style.transform = `translate(-50%,-50%) scale(${scale})`;
+    }
 
     function wallMs(run = runState) {
       return performance.now() - (run ? run.startedPerf : runStartPerf);
@@ -1547,19 +1676,21 @@
       }
     }
 
-    async function startTrace(manifest, run) {
+    async function startTrace(manifest, run, runProviderSettings) {
       enqueueEvents([{ type:"checkpoint", tick:run.game.tick, wall_ms:wallMs(run), hash:core.hashGame(run.game), checkpoint:core.serializeGame(run.game) }], run);
       try {
         const response = await fetch("/api/run/start", {
           method:"POST",
           headers:{ "Content-Type":"application/json" },
-          body:JSON.stringify({ schema_version:1, manifest }),
+          body:JSON.stringify({ schema_version:1, manifest, provider:{ ...runProviderSettings } }),
         });
         if (!response.ok) throw new Error(`run/start ${response.status}`);
         const data = await response.json();
         run.id = data.run_id;
         run.controller.run_id = run.id;
         if (run.id && run.qualification.valid) run.qualification.reason = "recording";
+        $("hud-provider").textContent = runProviderSettings.model;
+        $("hud-provider").title = runProviderSettings.url;
         flushEvents(run);
         if (!isCurrentRun(run)) return;
         runId = run.id;
@@ -1784,6 +1915,11 @@
       $("hud-run").textContent = runId || "starting";
       $("hud-elapsed").textContent = (game.sim_ms / 1000).toFixed(1) + " s";
       $("hud-mode").textContent = game.terminal ? "ENDED" : paused ? "PAUSED" : autopilot ? "AUTO" : "MANUAL";
+      $("hud-selected").textContent = lastSelected;
+      $("hud-api").textContent = lastApi.api_ok === true ? "online" : lastApi.api_ok === false ? "error" : "pending";
+      $("hud-latency").textContent = Number.isFinite(lastApi.latency_ms) ? `${lastApi.latency_ms.toFixed(0)} ms` : "— ms";
+      $("hud-valid").textContent = controller.counters.accepted;
+      $("hud-applied").textContent = controller.counters.applied;
       $("selected").textContent = lastSelected;
       $("executed").textContent = currentExecutingText();
       $("request-status").textContent = controller.pending ? `pending · E${controller.epoch}/S${controller.pending.sequence}` : `idle · E${controller.epoch}`;
@@ -1851,6 +1987,8 @@
     }
 
     async function restartRun(reason = "reset") {
+      if (!isFileProtocol) await loadProviderSettings();
+      const runProviderSettings = { ...providerSettings };
       if (runState && !runState.ending) {
         invalidateQualification(reason, runState);
         endRun("aborted", runState);
@@ -1874,6 +2012,7 @@
       controller = djev.createController({ run_id:null, epoch:1 });
       const run = {
         token, game, controller, startedPerf:runStartPerf, id:null, qualification,
+        providerSettings:runProviderSettings,
         traceQueue:[], flushPromise:null, retryTimer:null, nextEventId:1,
         startPromise:null, decisionPromise:null, finalization:null, ending:null, complete:false,
       };
@@ -1909,7 +2048,7 @@
           context_version:djev.CONTEXT_VERSION,
           mode:"browser",
           rules:core.rulesManifest(),
-        }, run);
+        }, run, runProviderSettings);
         await run.startPromise;
         if (!isCurrentRun(run) || run.ending) return;
         maybeBeginDecision();
@@ -1942,6 +2081,7 @@
       else keys.add(key);
     });
     window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+    window.addEventListener("resize", resizeGameFrame);
     $("autopilot-button").addEventListener("click", () => {
       autopilot = !autopilot;
       invalidateQualification(autopilot ? "autopilot_enabled" : "manual");
@@ -1952,8 +2092,13 @@
     });
     $("pause-button").addEventListener("click", () => setPaused(!paused));
     $("restart-button").addEventListener("click", () => { invalidateQualification("reset"); restartRun(); });
+    $("settings-button").addEventListener("click", () => { openSettings().catch((error) => { $("settings-error").textContent = error.message; }); });
+    $("settings-cancel").addEventListener("click", cancelSettings);
+    $("settings-apply").addEventListener("click", () => { applySettingsAndRestart().catch((error) => { $("settings-error").textContent = error.message; }); });
+    $("diagnostics-button").addEventListener("click", () => { $("diagnostics").open = !$("diagnostics").open; });
     ["bullet-density","enemy-density","fast-bullet-ratio","fast-bullet-speed"].forEach((id) => $(id).addEventListener("input", readDifficultyControls));
 
+    resizeGameFrame();
     syncDifficultyControls();
     restartRun();
     requestAnimationFrame(frame);
